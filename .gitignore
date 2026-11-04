@@ -1,0 +1,7 @@
+samples/
+report.html
+results.json
+__pycache__/
+.DS_Store
+build/
+.build/
