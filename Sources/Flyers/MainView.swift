@@ -18,41 +18,37 @@ struct MainView: View {
     /// What to select once a link's tab switch has happened.
     @State private var linkedSelection: UUID?
     @State private var linkMessage: String?
+    /// Schedules showing their events in the list, by flyer.
+    @State private var expandedSeries: Set<UUID> = []
 
     private var today: Day { .today }
     private var reviewCount: Int { EventList.needingReview(engine.document.events).count }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !model.isSetUp && !model.isDemo {
+        Group {
+            if model.showsSetup {
                 SetupView(model: model, engine: engine)
             } else {
-                banners
-                HSplitView {
-                    list.frame(minWidth: 300, idealWidth: 400)
-                    detail.frame(minWidth: 340, maxWidth: .infinity)
+                NavigationSplitView {
+                    sidebar.navigationSplitViewColumnWidth(min: 300, ideal: 350, max: 460)
+                } detail: {
+                    detail
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .overlay(alignment: .bottom) { notices }
+                        .toolbar {
+                            ToolbarItem(placement: .primaryAction) {
+                                Button {
+                                    Task { await engine.scan() }
+                                } label: {
+                                    Label("Scan now", systemImage: "arrow.clockwise")
+                                }
+                                .disabled(engine.isScanning)
+                                .keyboardShortcut("r")
+                                .help("Check your library for new flyers (⌘R)")
+                            }
+                        }
                 }
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("View", selection: $tab) {
-                    Text("Upcoming").tag(ListTab.upcoming)
-                    Text(reviewCount > 0 ? "Needs review \(reviewCount)" : "Needs review").tag(ListTab.review)
-                    Text("Past").tag(ListTab.past)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await engine.scan() }
-                } label: {
-                    Label("Scan now", systemImage: "arrow.clockwise")
-                }
-                .disabled(engine.isScanning)
-                .help("Check your library for new flyers")
+                .background { tabShortcuts }
             }
         }
         .onAppear {
@@ -65,13 +61,55 @@ struct MainView: View {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate()
             model.refreshAccess()
+            if let id = model.eventToReveal {
+                model.eventToReveal = nil
+                reveal(id)
+            } else if selection == nil && !model.isShowingSettings {
+                selection = firstRowID(in: tab)
+            }
         }
         .onDisappear { NSApp.setActivationPolicy(.accessory) }
         .onChange(of: tab) {
-            selection = linkedSelection
+            selection = linkedSelection ?? firstRowID(in: tab)
             linkedSelection = nil
         }
+        .onChange(of: reviewCount) { old, new in
+            // Clearing the review list moves on to the next event, like working through an inbox.
+            if tab == .review && new < old && !model.isShowingSettings { selection = firstRowID(in: .review) }
+        }
+        .onChange(of: selection) {
+            if selection != nil { model.isShowingSettings = false }
+        }
+        .onChange(of: model.isShowingSettings) {
+            // Clears the row, so clicking it again leaves the settings page.
+            if model.isShowingSettings { selection = nil }
+        }
+        .onChange(of: model.eventToReveal) {
+            guard let id = model.eventToReveal else { return }
+            model.eventToReveal = nil
+            reveal(id)
+        }
         .onOpenURL(perform: openLink)
+    }
+
+    /// ⌘1, ⌘2 and ⌘3 switch lists. A segmented picker can't hold shortcuts itself.
+    private var tabShortcuts: some View {
+        ForEach(Array(ListTab.allCases.enumerated()), id: \.element) { index, item in
+            Button(item.rawValue) { showList(item) }
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// Goes to a list, leaving the settings page even if that list is already the current one.
+    private func showList(_ item: ListTab) {
+        model.isShowingSettings = false
+        if item == tab {
+            if selection == nil { selection = firstRowID(in: tab) }
+        } else {
+            tab = item
+        }
     }
 
     private func openLink(_ url: URL) {
@@ -82,6 +120,14 @@ struct MainView: View {
             return
         }
         linkMessage = nil
+        reveal(event.id)
+    }
+
+    /// Switches to the list that holds the event and selects it.
+    private func reveal(_ id: UUID) {
+        guard let event = engine.event(id: id) else { return }
+        // The event may be inside a schedule, which has to be open for its row to show.
+        expandedSeries.insert(event.flyerID)
         let target: ListTab = event.state == .needsReview ? .review : event.isOver(today: today) ? .past : .upcoming
         if target == tab {
             selection = event.id
@@ -91,45 +137,126 @@ struct MainView: View {
         }
     }
 
-    @ViewBuilder private var banners: some View {
-        if let linkMessage {
-            Banner(systemImage: "link", text: linkMessage, tint: .secondary) {
-                Button("Dismiss") { self.linkMessage = nil }
-            }
-        }
-        if let message = engine.alertMessage {
-            Banner(systemImage: "exclamationmark.triangle", text: message, tint: .orange) {
-                Button("Dismiss") { engine.clearAlert() }
-            }
-        }
-        if let progress = engine.scanProgress {
-            Banner(systemImage: "photo.on.rectangle", text: progress, tint: .secondary) {
-                ProgressView().controlSize(.small)
-                Button("Stop") { engine.stopScan() }.disabled(engine.isStopping)
-            }
-        }
-        if engine.isPaused && !engine.isScanning {
-            Banner(systemImage: "pause.circle", text: "Scanning is paused", tint: .secondary) {
-                Button("Resume") { Task { await engine.scan() } }
-            }
-        }
-        if !engine.lastDeletedIDs.isEmpty {
-            let count = engine.lastDeletedIDs.count
-            Banner(systemImage: "trash", text: count == 1 ? "Event deleted" : "\(count) events deleted", tint: .secondary) {
-                Button("Undo") { engine.undoDelete() }
-                Button("Dismiss") { engine.dismissUndo() }
-            }
-        }
+    // MARK: Notices
+
+    /// Changes whenever a notice appears or goes away, which drives the animation.
+    private var noticeKey: String {
+        [
+            linkMessage, engine.alertMessage, engine.scanProgress,
+            engine.isPaused && !engine.isScanning ? "paused" : nil,
+            engine.lastDeletedIDs.isEmpty ? nil : "\(engine.lastDeletedIDs.count)",
+        ]
+        .map { $0 == nil ? "-" : "+" }
+        .joined()
     }
 
-    // MARK: List
+    /// Notices float over the content, so nothing jumps when one comes or goes.
+    private var notices: some View {
+        GlassGroup(spacing: 8) {
+            VStack(spacing: 8) {
+                if let linkMessage {
+                    Notice(systemImage: "link", text: linkMessage, tint: .secondary) {
+                        Button("Dismiss") { self.linkMessage = nil }
+                    }
+                }
+                if let message = engine.alertMessage {
+                    Notice(systemImage: "exclamationmark.triangle.fill", text: message, tint: .orange) {
+                        Button("Dismiss") { engine.clearAlert() }
+                    }
+                }
+                if let progress = engine.scanProgress {
+                    Notice(text: progress, tint: .secondary) {
+                        Button("Stop") { engine.stopScan() }.disabled(engine.isStopping)
+                    }
+                }
+                if engine.isPaused && !engine.isScanning {
+                    Notice(systemImage: "pause.circle.fill", text: "Scanning is paused", tint: .secondary) {
+                        Button("Resume") { Task { await engine.scan() } }
+                    }
+                }
+                if !engine.lastDeletedIDs.isEmpty {
+                    let count = engine.lastDeletedIDs.count
+                    Notice(systemImage: "trash", text: count == 1 ? "Event deleted" : "\(count) events deleted", tint: .secondary) {
+                        Button("Undo") { engine.undoDelete() }
+                        Button("Dismiss") { engine.dismissUndo() }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 480)
+        .padding(16)
+        .animation(.snappy, value: noticeKey)
+    }
+
+    // MARK: Sidebar
+
+    private var sidebar: some View {
+        list
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Picker("View", selection: Binding(get: { tab }, set: showList)) {
+                    Text("Upcoming").tag(ListTab.upcoming)
+                    Text(reviewCount > 0 ? "Needs review \(reviewCount)" : "Needs review").tag(ListTab.review)
+                    Text("Past").tag(ListTab.past)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    settingsRow
+                    if let scanStatus {
+                        Text(scanStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.horizontal, 12)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            }
+    }
+
+    /// Pinned below the list, and highlighted like a selected row while its page is showing.
+    private var settingsRow: some View {
+        Button {
+            if model.isShowingSettings {
+                showList(tab)
+            } else {
+                model.isShowingSettings = true
+            }
+        } label: {
+            Label("Settings", systemImage: "gearshape")
+                .fontWeight(.medium)
+                .foregroundStyle(model.isShowingSettings ? .white : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    model.isShowingSettings ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Settings (⌘,)")
+    }
+
+    private var scanStatus: String? {
+        guard let date = engine.document.lastScanAt else { return nil }
+        let when = "Scanned \(date.formatted(.relative(presentation: .named)))"
+        guard let summary = engine.document.lastScanSummary else { return when }
+        return "\(when) · \(summary)"
+    }
 
     @ViewBuilder private var list: some View {
         switch tab {
         case .upcoming:
             let sections = EventList.upcoming(engine.document.events, today: today)
             if sections.isEmpty {
-                EmptyList(title: "No upcoming events", message: "Photograph a flyer and it'll show up here after the next scan.")
+                EmptyList(symbol: "calendar", title: "No upcoming events", message: "Photograph a flyer and it'll show up here after the next scan.")
             } else {
                 List(selection: $selection) {
                     ForEach(sections) { section in
@@ -138,28 +265,46 @@ struct MainView: View {
                         }
                     }
                 }
+                .listStyle(.sidebar)
                 .onDeleteCommand(perform: deleteSelection)
             }
         case .review:
             let events = EventList.needingReview(engine.document.events)
             if events.isEmpty {
-                EmptyList(title: "Nothing to check", message: "Events that need a second look wait here before reaching your calendar.")
+                EmptyList(symbol: "checkmark.circle", title: "Nothing to check", message: "Events that need a second look wait here before reaching your calendar.")
             } else {
                 List(selection: $selection) {
                     ForEach(events) { eventRow($0, day: $0.startDay) }
                 }
+                .listStyle(.sidebar)
                 .onDeleteCommand(perform: deleteSelection)
             }
         case .past:
             let events = EventList.past(engine.document.events, today: today)
             if events.isEmpty {
-                EmptyList(title: "No past events", message: "Events move here once they've finished.")
+                EmptyList(symbol: "clock", title: "No past events", message: "Events move here once they've finished.")
             } else {
                 List(selection: $selection) {
                     ForEach(events) { eventRow($0, day: $0.startDay) }
                 }
+                .listStyle(.sidebar)
                 .onDeleteCommand(perform: deleteSelection)
             }
+        }
+    }
+
+    private func firstRowID(in tab: ListTab) -> UUID? {
+        switch tab {
+        case .upcoming:
+            switch EventList.upcoming(engine.document.events, today: today).first?.rows.first {
+            case .event(let event, _): return event.id
+            case .series(let flyerID, _, _): return flyerID
+            case nil: return nil
+            }
+        case .review:
+            return EventList.needingReview(engine.document.events).first?.id
+        case .past:
+            return EventList.past(engine.document.events, today: today).first?.id
         }
     }
 
@@ -169,15 +314,33 @@ struct MainView: View {
             eventRow(event, day: next)
         case .series(let flyerID, let events, let next):
             let flyer = engine.flyer(id: flyerID)
-            DisclosureGroup {
-                ForEach(events) { eventRow($0, day: $0.nextDay(onOrAfter: today)) }
-            } label: {
+            let isExpanded = expandedSeries.contains(flyerID)
+            // Not a DisclosureGroup, whose leading chevron would push this thumbnail out of line
+            // with the rows around it. Selecting the row opens the schedule, and the chevron
+            // only shows or hides its events.
+            HStack(spacing: 8) {
                 RowLabel(
                     title: flyer?.title ?? "Weekly schedule",
-                    subtitle: "\(events.count) repeating events, next \(EventFormat.shortDay(next))",
+                    subtitle: "\(events.count) repeating events",
+                    detail: "Next \(EventFormat.shortDay(next))",
                     thumbnail: thumbnail(flyer),
-                    badge: "Optional"
+                    repeats: true,
+                    status: nil
                 )
+                Button {
+                    withAnimation(.snappy) {
+                        if isExpanded { expandedSeries.remove(flyerID) } else { expandedSeries.insert(flyerID) }
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .fontWeight(.semibold)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(isExpanded ? "Hide these events" : "Show these events")
             }
             .tag(flyerID)
             .swipeActions(edge: .trailing) {
@@ -186,15 +349,25 @@ struct MainView: View {
             .contextMenu {
                 Button("Delete all \(events.count)", role: .destructive) { delete(events.map(\.id)) }
             }
+            if isExpanded {
+                // They share the schedule's flyer, which the row above already shows.
+                ForEach(events) {
+                    eventRow($0, day: $0.nextDay(onOrAfter: today), showsThumbnail: false)
+                        .padding(.leading, 54)
+                }
+            }
         }
     }
 
-    private func eventRow(_ event: FlyerEvent, day: Day?) -> some View {
+    private func eventRow(_ event: FlyerEvent, day: Day?, showsThumbnail: Bool = true) -> some View {
         RowLabel(
             title: event.name,
-            subtitle: [EventFormat.summary(event, day: day), event.location].compactMap { $0 }.joined(separator: " · "),
+            subtitle: EventFormat.summary(event, day: day),
+            detail: event.location,
             thumbnail: thumbnail(engine.flyer(id: event.flyerID)),
-            badge: event.rrule != nil ? "Repeats" : nil
+            repeats: event.rrule != nil,
+            status: RowStatus(event.state),
+            showsThumbnail: showsThumbnail
         )
         .tag(event.id)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -231,7 +404,9 @@ struct MainView: View {
     // MARK: Detail
 
     @ViewBuilder private var detail: some View {
-        if let selection, let event = engine.event(id: selection), !event.isHidden {
+        if model.isShowingSettings {
+            SettingsView(model: model, engine: engine)
+        } else if let selection, let event = engine.event(id: selection), !event.isHidden {
             EventDetail(engine: engine, event: event, thumbnail: thumbnail(engine.flyer(id: event.flyerID))) {
                 delete([event.id])
             }
@@ -242,85 +417,183 @@ struct MainView: View {
                 events: engine.visibleEvents.filter { $0.flyerID == selection && $0.state == .available && $0.rrule != nil }
             )
             .id(flyer.id)
+        } else if firstRowID(in: tab) != nil {
+            ContentUnavailableView("Select an event", systemImage: "photo.on.rectangle.angled")
         } else {
-            VStack(spacing: 6) {
-                Text("Select an event").foregroundStyle(.secondary)
-                if let summary = engine.document.lastScanSummary, let date = engine.document.lastScanAt {
-                    Text("Last scan \(date.formatted(.relative(presentation: .named))): \(summary)")
-                        .font(.caption).foregroundStyle(.tertiary)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The sidebar already explains why its list is empty.
+            Color.clear
         }
     }
 }
 
 // MARK: - Pieces
 
-struct RowLabel: View {
-    let title: String
-    let subtitle: String
-    let thumbnail: NSImage?
-    let badge: String?
+/// Rows only mark what needs attention. Most events are on the calendar, so a mark
+/// on each one would just be noise.
+enum RowStatus {
+    case review
+    case waiting
 
-    var body: some View {
-        HStack(spacing: 10) {
-            Group {
-                if let thumbnail {
-                    Image(nsImage: thumbnail).resizable().scaledToFill()
-                } else {
-                    Color.secondary.opacity(0.15)
-                }
-            }
-            .frame(width: 36, height: 46)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(title).fontWeight(.medium).lineLimit(1)
-                    if let badge {
-                        Text(badge)
-                            .font(.caption2)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
-                    }
-                }
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
+    init?(_ state: EventState) {
+        switch state {
+        case .needsReview: self = .review
+        case .queued: self = .waiting
+        default: return nil
         }
-        .padding(.vertical, 2)
     }
 }
 
-struct Banner<Actions: View>: View {
-    let systemImage: String
+struct RowLabel: View {
+    let title: String
+    let subtitle: String
+    let detail: String?
+    let thumbnail: NSImage?
+    let repeats: Bool
+    let status: RowStatus?
+    var showsThumbnail = true
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if showsThumbnail {
+                Group {
+                    if let thumbnail {
+                        Image(nsImage: thumbnail).resizable().scaledToFill()
+                    } else {
+                        Rectangle().fill(.quaternary)
+                    }
+                }
+                .frame(width: 42, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.primary.opacity(0.12))
+                }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).fontWeight(.semibold).lineLimit(1)
+                HStack(spacing: 4) {
+                    if repeats {
+                        Image(systemName: "repeat").imageScale(.small).accessibilityLabel("Repeats")
+                    }
+                    Text(subtitle).lineLimit(1)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                if let detail {
+                    Text(detail).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            switch status {
+            case .review:
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.orange)
+                    .help("Needs a second look")
+                    .accessibilityLabel("Needs review")
+            case .waiting:
+                Image(systemName: "clock")
+                    .foregroundStyle(.secondary)
+                    .help("Waiting for a calendar")
+                    .accessibilityLabel("Waiting for a calendar")
+            case nil:
+                EmptyView()
+            }
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+/// A floating message with its actions. With no symbol it shows a spinner.
+struct Notice<Actions: View>: View {
+    var systemImage: String?
     let text: String
     let tint: Color
     @ViewBuilder let actions: () -> Actions
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage).foregroundStyle(tint)
-            Text(text).font(.callout)
-            Spacer()
-            actions().controlSize(.small)
+        HStack(spacing: 10) {
+            if let systemImage {
+                Image(systemName: systemImage).foregroundStyle(tint)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Text(text).font(.callout).lineLimit(2)
+            Spacer(minLength: 8)
+            actions()
+                .buttonStyle(.borderless)
+                .fontWeight(.medium)
         }
-        .padding(.horizontal, 12).padding(.vertical, 7)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
 struct EmptyList: View {
+    let symbol: String
     let title: String
     let message: String
 
     var body: some View {
-        VStack(spacing: 6) {
-            Text(title).font(.headline)
-            Text(message).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        ContentUnavailableView(title, systemImage: symbol, description: Text(message))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The scrolling page behind an event or a schedule, tinted by its flyer.
+struct DetailPage<Content: View>: View {
+    let thumbnail: NSImage?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16, content: content)
+                .padding(.horizontal, 28)
+                .padding(.top, 24)
+                // Leaves room to scroll past a floating notice.
+                .padding(.bottom, 72)
+                .frame(maxWidth: 680, alignment: .leading)
+                .frame(maxWidth: .infinity)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background { FlyerBackdrop(image: thumbnail) }
+    }
+}
+
+/// The flyer itself, like a print on the page.
+struct FlyerPoster: View {
+    let image: NSImage
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(maxWidth: 190, maxHeight: 260)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(0.18))
+            }
+            .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
+    }
+}
+
+/// One labeled line in an event's card.
+struct FactRow<Value: View>: View {
+    let symbol: String
+    let label: String
+    @ViewBuilder let value: () -> Value
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.caption).foregroundStyle(.secondary)
+                value()
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -334,67 +607,25 @@ struct EventDetail: View {
     @State private var pendingLink: URL?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if let thumbnail {
-                    Button { isViewingPhoto = true } label: {
-                        Image(nsImage: thumbnail)
-                            .resizable().scaledToFit()
-                            .frame(maxWidth: .infinity, maxHeight: 340)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
-                    .help("View the full photo")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(event.name).font(.title2).fontWeight(.semibold).textSelection(.enabled)
-                    Text(EventFormat.full(event)).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-                ForEach(event.problems, id: \.self) { problem in
-                    Label(problem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    if let recurrence = event.recurrence {
-                        Label(EventFormat.repeats(recurrence), systemImage: "repeat")
-                    }
-                    if let location = event.location {
-                        Label(event.locationInferred ? "\(location) (best guess)" : location, systemImage: "mappin.and.ellipse")
-                            .textSelection(.enabled)
-                    }
-                    if let text = event.url, let url = URL(string: text) {
-                        Button { pendingLink = url } label: {
-                            Label(url.host() ?? text, systemImage: "link")
+        DetailPage(thumbnail: thumbnail) {
+            header
+            if !event.problems.isEmpty {
+                GlassCard(tint: .orange.opacity(0.25)) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(event.problems, id: \.self) { problem in
+                            Label(problem, systemImage: "exclamationmark.triangle.fill")
+                                .symbolRenderingMode(.multicolor)
                         }
-                        .buttonStyle(.link)
                     }
-                    Label(statusText, systemImage: event.state == .onCalendar ? "calendar.badge.checkmark" : "calendar")
-                        .foregroundStyle(event.state == .onCalendar ? .green : .secondary)
                 }
-                if let details = event.details {
-                    Text(details).font(.callout).textSelection(.enabled)
-                }
-                if let printed = event.datePrinted {
-                    Text("As printed: \(printed)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-                if event.state == .needsReview || event.state == .available {
-                    Button("Add to Calendar") { engine.addToCalendar(event.id) }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.top, 4)
-                }
-                if event.state == .onCalendar {
-                    Button("Remove from Calendar") { engine.removeFromCalendar(event.id) }
-                        .padding(.top, 4)
-                }
-                HStack {
-                    Button("Edit") { isEditing = true }
-                    Button("View photo") { isViewingPhoto = true }
-                    Spacer()
-                    Button("Delete", role: .destructive, action: onDelete)
-                }
-                .padding(.top, 4)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            actions
+            facts
+            if let details = event.details {
+                GlassCard {
+                    Text(details).textSelection(.enabled)
+                }
+            }
         }
         .sheet(isPresented: $isEditing) { EditEventSheet(engine: engine, event: event) }
         .sheet(isPresented: $isViewingPhoto) {
@@ -410,6 +641,110 @@ struct EventDetail: View {
             Button("Cancel", role: .cancel) {}
         } message: { url in
             Text(url.absoluteString)
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 20) {
+            if let thumbnail {
+                Button { isViewingPhoto = true } label: { FlyerPoster(image: thumbnail) }
+                    .buttonStyle(.plain)
+                    .help("View the full photo")
+                    .accessibilityLabel("View the full photo")
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text(event.name)
+                    .font(.system(.title, weight: .bold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text(EventFormat.full(event))
+                    .font(.title3)
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Label(statusText, systemImage: statusSymbol)
+                    .font(.callout)
+                    .foregroundStyle(event.state == .onCalendar ? AnyShapeStyle(.green) : AnyShapeStyle(.primary.opacity(0.8)))
+                    .padding(.top, 2)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var actions: some View {
+        GlassGroup {
+            HStack(spacing: 8) {
+                if event.state == .needsReview || event.state == .available {
+                    Button { engine.addToCalendar(event.id) } label: {
+                        Label("Add to Calendar", systemImage: "calendar.badge.plus")
+                    }
+                    .glassButton(prominent: true)
+                }
+                if event.state == .onCalendar {
+                    Button { engine.removeFromCalendar(event.id) } label: {
+                        Label("Remove from Calendar", systemImage: "calendar.badge.minus")
+                    }
+                    .glassButton()
+                }
+                Button { isEditing = true } label: {
+                    Label("Edit", systemImage: "pencil").labelStyle(.iconOnly)
+                }
+                .glassButton()
+                .keyboardShortcut("e")
+                .help("Edit (⌘E)")
+                Button { isViewingPhoto = true } label: {
+                    Label("View photo", systemImage: "photo").labelStyle(.iconOnly)
+                }
+                .glassButton()
+                .help("View the full photo")
+                Spacer(minLength: 0)
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete", systemImage: "trash").labelStyle(.iconOnly)
+                }
+                .glassButton()
+                .help("Delete")
+            }
+            .controlSize(.large)
+        }
+    }
+
+    @ViewBuilder private var facts: some View {
+        let link = event.url.flatMap { URL(string: $0) }
+        if event.recurrence != nil || event.location != nil || link != nil || event.datePrinted != nil {
+            GlassCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let recurrence = event.recurrence {
+                        FactRow(symbol: "repeat", label: "Repeats") {
+                            Text(EventFormat.repeats(recurrence))
+                        }
+                    }
+                    if let location = event.location {
+                        FactRow(symbol: "mappin.and.ellipse", label: event.locationInferred ? "Where (best guess)" : "Where") {
+                            Text(location).textSelection(.enabled)
+                        }
+                    }
+                    if let link {
+                        FactRow(symbol: "link", label: "Link") {
+                            Button(link.host() ?? link.absoluteString) { pendingLink = link }
+                                .buttonStyle(.link)
+                        }
+                    }
+                    if let printed = event.datePrinted {
+                        FactRow(symbol: "text.quote", label: "As printed") {
+                            Text(printed).textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var statusSymbol: String {
+        switch event.state {
+        case .onCalendar: return "checkmark.circle.fill"
+        case .queued: return "clock"
+        case .needsReview: return "exclamationmark.circle"
+        default: return "calendar"
         }
     }
 
@@ -431,24 +766,25 @@ struct FullPhotoSheet: View {
     @State private var failure: String?
 
     var body: some View {
-        VStack(spacing: 12) {
-            Group {
-                if let image {
-                    Image(nsImage: image).resizable().scaledToFit()
-                } else if let failure {
-                    Text(failure).foregroundStyle(.secondary)
-                } else {
-                    ProgressView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            HStack {
-                Spacer()
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else if let failure {
+                ContentUnavailableView("No photo", systemImage: "photo", description: Text(failure))
+            } else {
+                ProgressView()
             }
         }
-        .padding(16)
         .frame(width: 760, height: 820)
+        .overlay(alignment: .topTrailing) {
+            Button("Close", systemImage: "xmark") { dismiss() }
+                .labelStyle(.iconOnly)
+                .glassButton()
+                .controlSize(.large)
+                .keyboardShortcut(.cancelAction)
+                .help("Close (Esc)")
+                .padding(14)
+        }
         .task(load)
     }
 
@@ -477,31 +813,38 @@ struct SeriesDetail: View {
     let events: [FlyerEvent]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if let thumbnail {
-                    Image(nsImage: thumbnail)
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: 340)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+        DetailPage(thumbnail: thumbnail) {
+            HStack(alignment: .top, spacing: 20) {
+                if let thumbnail { FlyerPoster(image: thumbnail) }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(flyer.title ?? "Weekly schedule")
+                        .font(.system(.title, weight: .bold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("These repeat, so they stay here until you choose the ones you want on your calendar.")
+                        .foregroundStyle(.primary.opacity(0.8))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Text(flyer.title ?? "Weekly schedule").font(.title2).fontWeight(.semibold)
-                Text("These repeat, so they stay here until you choose the ones you want on your calendar.")
-                    .font(.callout).foregroundStyle(.secondary)
-                ForEach(events) { event in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(event.name).fontWeight(.medium)
-                            Text(event.recurrence.map(EventFormat.repeats) ?? "").font(.caption).foregroundStyle(.secondary)
+                .padding(.top, 4)
+            }
+            GlassCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(events) { event in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(event.name).fontWeight(.semibold)
+                                Text(event.recurrence.map(EventFormat.repeats) ?? "")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button { engine.addToCalendar(event.id) } label: {
+                                Label("Add", systemImage: "calendar.badge.plus")
+                            }
+                            .glassButton()
                         }
-                        Spacer()
-                        Button("Add") { engine.addToCalendar(event.id) }
                     }
-                    Divider()
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -522,31 +865,39 @@ struct EditEventSheet: View {
 
     var body: some View {
         Form {
-            TextField("Name", text: $name)
-            DatePicker("Date", selection: $start, displayedComponents: .date)
-            Toggle("Has a start time", isOn: $hasTime)
-            if hasTime {
-                DatePicker("Start", selection: $start, displayedComponents: .hourAndMinute)
-                Toggle("Has an end time", isOn: $hasEndTime)
-                if hasEndTime {
-                    DatePicker("End", selection: $end, displayedComponents: .hourAndMinute)
+            Section {
+                TextField("Name", text: $name)
+                TextField("Location", text: $location)
+            }
+            Section {
+                DatePicker("Date", selection: $start, displayedComponents: .date)
+                Toggle("Has a start time", isOn: $hasTime)
+                if hasTime {
+                    DatePicker("Start", selection: $start, displayedComponents: .hourAndMinute)
+                    Toggle("Has an end time", isOn: $hasEndTime)
+                    if hasEndTime {
+                        DatePicker("End", selection: $end, displayedComponents: .hourAndMinute)
+                    }
                 }
             }
-            TextField("Location", text: $location)
-            TextField("Link", text: $link)
-            if let linkError {
-                Text(linkError).font(.caption).foregroundStyle(.red)
-            }
-            TextField("Details", text: $details, axis: .vertical).lineLimit(2...5)
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save", action: save)
-                    .keyboardShortcut(.defaultAction)
+            Section {
+                TextField("Link", text: $link)
+                if let linkError {
+                    Text(linkError).font(.caption).foregroundStyle(.red)
+                }
+                TextField("Details", text: $details, axis: .vertical).lineLimit(2...5)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420)
+        .frame(width: 440)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", role: .cancel) { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save", action: save)
+            }
+        }
         .onAppear(perform: load)
     }
 

@@ -16,15 +16,29 @@ struct FlyersApp: App {
                 .frame(minWidth: 760, minHeight: 480)
         }
         .defaultSize(width: 980, height: 660)
-
-        Settings {
-            SettingsView(model: model, engine: model.engine)
-        }
+        .commands { SettingsCommand(model: model) }
 
         MenuBarExtra("Flyers", systemImage: "calendar.badge.plus") {
             MenuBarView(model: model, engine: model.engine)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Flyers ▸ Settings… (⌘,), which opens the settings page in the main window.
+struct SettingsCommand: Commands {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                model.isShowingSettings = true
+                openWindow(id: AppModel.mainWindowID)
+                NSApp.activate()
+            }
+            .keyboardShortcut(",")
+        }
     }
 }
 
@@ -58,6 +72,12 @@ final class AppModel: ObservableObject {
     let engine: FlyersEngine
     let calendarService: CalendarService
     let isDemo: Bool
+    /// `--demo-setup` shows first-run setup on top of the demo data.
+    private let previewsSetup: Bool
+    /// Set to open an event in the main window, such as from the menu bar.
+    @Published var eventToReveal: UUID?
+    /// True while the main window shows the settings page instead of an event.
+    @Published var isShowingSettings = false
     @Published var hasAPIKey: Bool
     @Published var hasPhotoAccess: Bool
     @Published var hasCalendarAccess: Bool
@@ -67,8 +87,10 @@ final class AppModel: ObservableObject {
     private var calendarObserver: NSObjectProtocol?
 
     init() {
-        let demo = CommandLine.arguments.contains("--demo")
+        let previewSetup = CommandLine.arguments.contains("--demo-setup")
+        let demo = previewSetup || CommandLine.arguments.contains("--demo")
         isDemo = demo
+        previewsSetup = previewSetup
         if demo {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("flyers-demo-\(UUID())", isDirectory: true)
             let store = DocumentStore(directory: directory)
@@ -77,9 +99,9 @@ final class AppModel: ObservableObject {
                 store: store, photos: PhotoLibrary(), extractor: AnthropicClient(), calendar: DemoCalendar(),
                 apiKey: { nil }, document: DemoData.document(store: store)
             )
-            hasAPIKey = true
-            hasPhotoAccess = true
-            hasCalendarAccess = true
+            hasAPIKey = !previewSetup
+            hasPhotoAccess = !previewSetup
+            hasCalendarAccess = !previewSetup
             return
         }
         let store = DocumentStore(directory: DocumentStore.defaultDirectory)
@@ -101,6 +123,8 @@ final class AppModel: ObservableObject {
     var isSetUp: Bool {
         hasAPIKey && hasPhotoAccess && hasCalendarAccess && engine.document.settings.calendarID != nil
     }
+
+    var showsSetup: Bool { previewsSetup || (!isDemo && !isSetUp) }
 
     func scanIfReady() {
         guard !isDemo, hasAPIKey, hasPhotoAccess else { return }
@@ -202,14 +226,24 @@ enum DemoData {
     static func document(store: DocumentStore) -> AppDocument {
         var document = AppDocument()
         let today = Day.today
-        let makeFlyer = { (title: String, gray: CGFloat) -> Flyer in
+        let makeFlyer = { (title: String, top: NSColor, bottom: NSColor) -> Flyer in
             let id = UUID()
             let context = CGContext(
                 data: nil, width: 450, height: 600, bitsPerComponent: 8, bytesPerRow: 0,
                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
             )!
-            context.setFillColor(CGColor(red: gray, green: 0.45, blue: 1 - gray, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: 450, height: 600))
+            let colors = [bottom.cgColor, top.cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: nil) {
+                context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: 600), options: [])
+            }
+            // Draws the title, so demo flyers read as posters rather than blocks of color.
+            let previous = NSGraphicsContext.current
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            NSAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: 58, weight: .black),
+                .foregroundColor: NSColor.white,
+            ]).draw(in: CGRect(x: 32, y: 40, width: 386, height: 520))
+            NSGraphicsContext.current = previous
             if let image = context.makeImage(), let data = ImageTools.jpeg(image, maxEdge: 600) {
                 try? store.saveThumbnail(data, name: "\(id.uuidString).jpg")
             }
@@ -218,9 +252,9 @@ enum DemoData {
                 confidence: .high, thumbnailFile: "\(id.uuidString).jpg"
             )
         }
-        let jazz = makeFlyer("Fellowship Wednesdays", 0.2)
-        let market = makeFlyer("Winter craft market", 0.8)
-        let schedule = makeFlyer("Community schedule", 0.5)
+        let jazz = makeFlyer("Fellowship Wednesdays", .systemIndigo, .systemTeal)
+        let market = makeFlyer("Winter craft market", .systemRed, .systemOrange)
+        let schedule = makeFlyer("Community schedule", .systemGreen, .systemMint)
         document.flyers = [jazz, market, schedule]
 
         func event(

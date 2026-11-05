@@ -34,6 +34,8 @@ Open the app with sample data, without touching your photos or calendar:
 open -n build/Flyers.app --args --demo
 ```
 
+To see first-run setup instead, pass `--demo-setup`. Its buttons are real, so they ask for real permissions.
+
 Redraw the icon by running `scripts/make-icon.swift`, then rebuild `Resources/AppIcon.icns` from its output with `iconutil`.
 
 ## Layout
