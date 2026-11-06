@@ -44,6 +44,7 @@ Redraw the icon by running `scripts/make-icon.swift`, then rebuild `Resources/Ap
 - `Sources/Flyers`: the SwiftUI app.
 - `Sources/flyers-check`: the command-line regression check.
 - `extract.py`: the original Python prototype.
+- `docs/`: the landing page.
 
 The library is one JSON file at `~/Library/Application Support/Flyers/library.json`. The API key is in your login Keychain.
 

@@ -67,6 +67,14 @@ struct MainView: View {
             } else if selection == nil && !model.isShowingSettings {
                 selection = firstRowID(in: tab)
             }
+            model.showTourIfNew()
+        }
+        .onChange(of: model.showsSetup) {
+            // Setup just finished, so this is the first look at the main window.
+            if !model.showsSetup { model.showTourIfNew() }
+        }
+        .sheet(isPresented: Binding(get: { model.isShowingTour }, set: { if !$0 { model.tourClosed() } })) {
+            TourView { model.tourClosed() }
         }
         .onDisappear { NSApp.setActivationPolicy(.accessory) }
         .onChange(of: tab) {

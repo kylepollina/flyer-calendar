@@ -39,6 +39,13 @@ struct SettingsCommand: Commands {
             }
             .keyboardShortcut(",")
         }
+        CommandGroup(replacing: .help) {
+            Button("Welcome Tour") {
+                model.isShowingTour = true
+                openWindow(id: AppModel.mainWindowID)
+                NSApp.activate()
+            }
+        }
     }
 }
 
@@ -78,6 +85,7 @@ final class AppModel: ObservableObject {
     @Published var eventToReveal: UUID?
     /// True while the main window shows the settings page instead of an event.
     @Published var isShowingSettings = false
+    @Published var isShowingTour = false
     @Published var hasAPIKey: Bool
     @Published var hasPhotoAccess: Bool
     @Published var hasCalendarAccess: Bool
@@ -125,6 +133,18 @@ final class AppModel: ObservableObject {
     }
 
     var showsSetup: Bool { previewsSetup || (!isDemo && !isSetUp) }
+
+    /// Shows the tour the first time the main window opens after setup. Demo mode never
+    /// opens it by itself, and never records it as seen, since demo runs share your preferences.
+    func showTourIfNew() {
+        guard !isDemo, !showsSetup, !UserDefaults.standard.bool(forKey: TourView.seenKey) else { return }
+        isShowingTour = true
+    }
+
+    func tourClosed() {
+        isShowingTour = false
+        if !isDemo { UserDefaults.standard.set(true, forKey: TourView.seenKey) }
+    }
 
     func scanIfReady() {
         guard !isDemo, hasAPIKey, hasPhotoAccess else { return }
@@ -226,7 +246,7 @@ enum DemoData {
     static func document(store: DocumentStore) -> AppDocument {
         var document = AppDocument()
         let today = Day.today
-        let makeFlyer = { (title: String, top: NSColor, bottom: NSColor) -> Flyer in
+        let makeFlyer = { (title: String, footer: String, top: NSColor, bottom: NSColor) -> Flyer in
             let id = UUID()
             let context = CGContext(
                 data: nil, width: 450, height: 600, bitsPerComponent: 8, bytesPerRow: 0,
@@ -236,13 +256,23 @@ enum DemoData {
             if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: nil) {
                 context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: 600), options: [])
             }
-            // Draws the title, so demo flyers read as posters rather than blocks of color.
+            // Draws a title, a footer and a few shapes, so demo flyers read as posters
+            // rather than blocks of color.
+            context.setFillColor(NSColor.white.withAlphaComponent(0.16).cgColor)
+            context.fillEllipse(in: CGRect(x: 250, y: 400, width: 260, height: 260))
+            context.fillEllipse(in: CGRect(x: -60, y: 170, width: 150, height: 150))
+            context.setFillColor(NSColor.white.withAlphaComponent(0.8).cgColor)
+            context.fill(CGRect(x: 32, y: 128, width: 60, height: 5))
             let previous = NSGraphicsContext.current
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
             NSAttributedString(string: title, attributes: [
                 .font: NSFont.systemFont(ofSize: 58, weight: .black),
                 .foregroundColor: NSColor.white,
-            ]).draw(in: CGRect(x: 32, y: 40, width: 386, height: 520))
+            ]).draw(in: CGRect(x: 32, y: 150, width: 386, height: 380))
+            NSAttributedString(string: footer, attributes: [
+                .font: NSFont.systemFont(ofSize: 24, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.92),
+            ]).draw(in: CGRect(x: 32, y: 36, width: 386, height: 80))
             NSGraphicsContext.current = previous
             if let image = context.makeImage(), let data = ImageTools.jpeg(image, maxEdge: 600) {
                 try? store.saveThumbnail(data, name: "\(id.uuidString).jpg")
@@ -252,9 +282,9 @@ enum DemoData {
                 confidence: .high, thumbnailFile: "\(id.uuidString).jpg"
             )
         }
-        let jazz = makeFlyer("Fellowship Wednesdays", .systemIndigo, .systemTeal)
-        let market = makeFlyer("Winter craft market", .systemRed, .systemOrange)
-        let schedule = makeFlyer("Community schedule", .systemGreen, .systemMint)
+        let jazz = makeFlyer("Fellowship Wednesdays", "Live jazz at Vermillion\n1508 11th Ave", .systemIndigo, .systemTeal)
+        let market = makeFlyer("Winter craft market", "Local makers, hot cider\nPark pavilion", .systemRed, .systemOrange)
+        let schedule = makeFlyer("Community schedule", "Fitness · Trivia · Run club\nAll welcome", .systemGreen, .systemMint)
         document.flyers = [jazz, market, schedule]
 
         func event(

@@ -258,6 +258,11 @@ struct SettingsView: View {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
+            Section("Help") {
+                LabeledContent("Welcome tour") {
+                    Button("Show Tour…") { model.isShowingTour = true }
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)

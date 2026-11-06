@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flyers: event flyers to calendar events, on macOS</title>
+<meta name="description" content="Flyers is a Mac menu bar app that finds event flyers in your new photos and puts the events on your calendar. Photos are checked on your Mac first, and unclear events wait for you.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="images/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f3e8;
+    --bg-alt: #efe9d8;
+    --ink: #1d1b2e;
+    --muted: #5e5a6e;
+    --line: #ddd5bf;
+    --accent: #d9482b;
+    --card: #fffcf4;
+    --navy: #2a2f55;
+    --flyer-1: linear-gradient(160deg, #6d6cf0, #52c7de);
+    --flyer-2: linear-gradient(160deg, #f0574a, #f6a43c);
+    --flyer-3: linear-gradient(160deg, #3dc66b, #5bd8c6);
+    --shadow: 0 18px 40px rgba(40, 30, 60, .18), 0 3px 8px rgba(40, 30, 60, .1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13121c;
+      --bg-alt: #1a1926;
+      --ink: #f3efe4;
+      --muted: #a9a4b8;
+      --line: #2e2c3d;
+      --accent: #ff8466;
+      --card: #1f1d2c;
+      --shadow: 0 18px 40px rgba(0, 0, 0, .55), 0 3px 8px rgba(0, 0, 0, .4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.6 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+  /* nav */
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; color: var(--ink); text-decoration: none; }
+  .brand img { width: 32px; height: 32px; }
+  nav .links { display: flex; gap: 20px; font-size: 15px; }
+  nav .links a { color: var(--muted); text-decoration: none; }
+  nav .links a:hover { color: var(--ink); }
+  @media (max-width: 560px) { nav .links a.hide-sm { display: none; } }
+
+  /* hero */
+  .hero { padding: 48px 0 64px; }
+  .hero-text { max-width: 760px; }
+  .eyebrow { display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 14px; }
+  h1 { font-size: clamp(42px, 7.4vw, 76px); font-weight: 900; line-height: 1.02; letter-spacing: -.035em; margin: 0 0 20px; }
+  h1 .arrow { color: var(--accent); }
+  .lead { font-size: 20px; color: var(--muted); max-width: 34em; margin: 0 0 28px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { display: inline-flex; align-items: center; padding: 12px 22px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 16px; border: 1.5px solid var(--ink); color: var(--ink); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:hover { transform: translateY(-1px); }
+  .meta { margin-top: 18px; font-size: 14px; color: var(--muted); }
+  /* Window screenshots have transparent corners, so the shadow follows the window's shape. */
+  .window { width: 100%; height: auto; display: block; filter: drop-shadow(0 14px 30px rgba(20, 15, 40, .3)); }
+  .hero-shot { margin-top: 52px; }
+
+  /* sections */
+  section { padding: 76px 0; }
+  section.alt { background: var(--bg-alt); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  h2 { font-size: clamp(30px, 4.6vw, 44px); font-weight: 800; line-height: 1.12; letter-spacing: -.025em; margin: 0 0 12px; }
+  .sub { color: var(--muted); max-width: 38em; margin: 0 0 40px; }
+
+  /* how it works */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 20px; counter-reset: step; }
+  .step { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 26px 24px 24px; }
+  .step::before { counter-increment: step; content: counter(step); display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--navy); color: #fff; font-weight: 800; font-size: 15px; margin-bottom: 16px; }
+  .step h3 { margin: 0 0 6px; font-size: 19px; }
+  .step p { margin: 0; color: var(--muted); font-size: 16px; }
+
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 24px; }
+  .card .chip { display: block; width: 30px; height: 40px; border-radius: 7px; margin-bottom: 16px; box-shadow: 0 4px 10px rgba(0,0,0,.15); }
+  .card h3 { margin: 0 0 6px; font-size: 19px; }
+  .card p { margin: 0; color: var(--muted); font-size: 16px; }
+  code, kbd { font: 600 .86em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg-alt); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  section.alt code, section.alt kbd { background: var(--card); }
+
+  /* screenshots */
+  .shots { display: grid; gap: 56px; }
+  .shot { margin: 0; display: grid; grid-template-columns: 1fr; gap: 18px; }
+  .shot figcaption h3 { margin: 0 0 4px; font-size: 21px; }
+  .shot figcaption p { margin: 0; color: var(--muted); }
+  @media (min-width: 860px) {
+    .shot { grid-template-columns: 2.2fr 1fr; align-items: center; gap: 36px; }
+    .shot.flip { grid-template-columns: 1fr 2.2fr; }
+    .shot.flip img { order: 2; }
+  }
+
+  /* install */
+  .install { text-align: center; }
+  .install .sub { margin-inline: auto; }
+  .install pre { display: inline-block; margin: 0; padding: 16px 22px; max-width: 100%; overflow-x: auto; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 14px; font: 500 15px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .req { margin: 22px auto 0; color: var(--muted); font-size: 15px; max-width: 40em; }
+
+  footer { padding: 36px 0 48px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+  footer a { color: var(--muted); }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#top"><img src="images/icon.png" alt="" width="32" height="32">Flyers</a>
+    <div class="links">
+      <a class="hide-sm" href="#how">How it works</a>
+      <a class="hide-sm" href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/kylepollina/flyer-calendar" rel="noopener">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero" id="top">
+    <div class="hero-text">
+      <span class="eyebrow">For macOS</span>
+      <h1>Photo of a flyer <span class="arrow">→</span> event on your calendar.</h1>
+      <p class="lead">Flyers watches for new photos of posters and flyers, reads the dates, times and places, and adds the events to your calendar. You just take the picture.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install Flyers</a>
+        <a class="btn" href="https://github.com/kylepollina/flyer-calendar" rel="noopener">View on GitHub</a>
+      </div>
+      <p class="meta">Native SwiftUI · macOS 15 or later · Runs from the menu bar</p>
+    </div>
+    <img class="window hero-shot" src="images/shot-event.png" width="1600" height="1030" alt="The Flyers window: a list of upcoming events with flyer thumbnails, and a jazz concert open beside it, showing its flyer, date, place and link on glass cards">
+  </header>
+</div>
+
+<section class="alt" id="how">
+  <div class="wrap">
+    <h2>Snap it and forget it.</h2>
+    <p class="sub">Flyers keeps checking your photo library in the background, so there's nothing to open or upload.</p>
+    <div class="steps">
+      <div class="step"><h3>Take a photo</h3><p>See a flyer on a lamppost or a café wall? Photograph it on your iPhone, like you already do.</p></div>
+      <div class="step"><h3>Flyers finds it</h3><p>Your Mac checks new photos for event text first. Only the ones that look like flyers are sent to the Anthropic API to be read.</p></div>
+      <div class="step"><h3>It's on your calendar</h3><p>The event lands in the calendar you chose, with the place, a link back to its flyer and an alert before it starts.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Careful about what it adds.</h2>
+    <p class="sub">A calendar full of wrong dates is worse than an empty one, so Flyers asks when it isn't sure.</p>
+    <div class="grid">
+      <div class="card"><span class="chip" style="background:var(--flyer-2)"></span><h3>Needs review</h3><p>Missing dates, a weekday that doesn't match its date, or a flyer the model isn't sure about all wait for a quick check first.</p></div>
+      <div class="card"><span class="chip" style="background:var(--flyer-3)"></span><h3>Weekly schedules</h3><p>A gym timetable or a community board becomes a list of repeating events. Add only the ones you want.</p></div>
+      <div class="card"><span class="chip" style="background:var(--flyer-1)"></span><h3>Stays in sync</h3><p>Rename, move or delete an event in Calendar and Flyers notices. Every event links back to its flyer with Open in Flyers.</p></div>
+      <div class="card"><span class="chip" style="background:linear-gradient(160deg,#3b4380,#6f7bd6)"></span><h3>Private by default</h3><p>Photos are checked on your Mac with Apple's Vision framework. Screenshots are left out unless you turn them on.</p></div>
+      <div class="card"><span class="chip" style="background:linear-gradient(160deg,#f6a43c,#f0d264)"></span><h3>A spending limit</h3><p>Flyers uses your own Anthropic API key and pauses scanning when it reaches the monthly limit you set.</p></div>
+      <div class="card"><span class="chip" style="background:linear-gradient(160deg,#a46cf0,#f06cb4)"></span><h3>Undo and edit</h3><p>Fix anything a flyer got wrong with <kbd>⌘E</kbd>, delete with <kbd>⌫</kbd>, and undo a delete you didn't mean.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="screenshots">
+  <div class="wrap">
+    <h2>A closer look</h2>
+    <p class="sub">Real windows, with made-up flyers.</p>
+    <div class="shots">
+      <figure class="shot">
+        <img class="window" src="images/shot-review.png" width="1600" height="1030" loading="lazy" alt="An event in the Needs review list, with a warning that the flyer doesn't say which date comes first, and an Add to Calendar button">
+        <figcaption><h3>Needs review</h3><p>When a flyer is unclear, Flyers says what's missing and waits for you to add the event.</p></figcaption>
+      </figure>
+      <figure class="shot flip">
+        <img class="window" src="images/shot-schedule.png" width="1600" height="1030" loading="lazy" alt="A community schedule flyer with its repeating events, group fitness on Mondays and trivia night on Tuesdays, each with an Add button">
+        <figcaption><h3>Weekly schedules</h3><p>Repeating events from one flyer stay together, so you can pick the ones worth a spot on your calendar.</p></figcaption>
+      </figure>
+      <figure class="shot">
+        <img class="window" src="images/shot-setup.png" width="1600" height="1030" loading="lazy" alt="The welcome screen, with setup steps for an Anthropic API key, Photos access, Calendar access and running in the background">
+        <figcaption><h3>Set up in a minute</h3><p>Add an API key, allow Photos and Calendar, and choose where events go. Flyers only checks photos taken from then on.</p></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <div class="wrap">
+    <h2>Install Flyers</h2>
+    <p class="sub">There's no download yet, so build it from source.</p>
+    <pre>git clone https://github.com/kylepollina/flyer-calendar.git
+cd flyer-calendar
+./scripts/build-app.sh
+cp -R build/Flyers.app /Applications/</pre>
+    <p class="req">Requires macOS 15 or later, Xcode or the Swift toolchain, and an <a href="https://console.anthropic.com/" rel="noopener">Anthropic API key</a>. Builds are signed ad hoc, so macOS may ask for Photos and Calendar access again after you rebuild.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© Kyle Pollina</span>
+    <span><a href="https://github.com/kylepollina/flyer-calendar" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+</body>
+</html>
