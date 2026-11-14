@@ -68,7 +68,8 @@ skips anything the phone already handled. If you never open the phone app, the M
 
 ## 6. v2 features
 
-- [ ] Drag and drop or Share, which also covers checking a few specific old photos
+- [x] Drag and drop, which also covers checking a few specific old photos
+- [ ] Share (Share menu on Mac, Share extension on iPhone)
 - [ ] Weekly digest notification
 - [ ] Leave-by alerts
 - [ ] Interests, to rank events by fit
@@ -79,9 +80,16 @@ skips anything the phone already handled. If you never open the phone app, the M
 - [ ] Deadline reminders, such as "RSVP by" and "tickets on sale"
 - [ ] Conflict warnings
 - [ ] Flyer wall view
+- [x] Map view of every event, past and upcoming, to see them all by place.
 - [ ] Desktop widget and Siri
 - [ ] Send an event to a friend
 
 ## Decisions
 
 - Open-ended repeats go straight to the calendar, and unwanted ones get deleted by hand. Don't add a review step for them.
+- Every event goes straight to the calendar, however many a flyer has. "Events from this photo" on an event's page lists them, with Delete All for a flyer that added too much.
+
+## Known gaps
+
+- [ ] Several separate flyers photographed within two minutes are saved as one flyer. Let one answer return several flyers, each with its own photos and events.
+- [ ] The landing page in `docs/` still describes "Weekly schedules" you pick from, which no longer exists.

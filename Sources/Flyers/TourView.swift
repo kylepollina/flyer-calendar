@@ -91,7 +91,7 @@ struct TourView: View {
                 .accessibilityHidden(true)
         } details: {
             FeatureRow(symbol: "exclamationmark.circle", title: "Unclear events wait in Needs review", keys: ["⌘2"])
-            FeatureRow(symbol: "repeat", title: "Weekly schedules let you pick what to add")
+            FeatureRow(symbol: "map", title: "See every event on a map, and everything one photo added")
             FeatureRow(symbol: "pencil", title: "Fix anything the flyer got wrong", keys: ["⌘E"])
         }
     }

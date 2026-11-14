@@ -402,6 +402,25 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(engine.document.flyers.first?.longitude == -87.6)
     }
 
+    @Test func eventsOnceHeldBackAreAddedToTheCalendarOnce() async {
+        let calendar = FakeCalendar()
+        let extractor = FakeExtractor {
+            ExtractionResult(isEventFlyer: true, events: ["A", "B", "C"].map {
+                ExtractedEvent(name: $0, startDate: future.iso, rrule: "FREQ=DAILY")
+            })
+        }
+        let (engine, _) = makeEngine(calendar: calendar, extractor: extractor)
+        await engine.scan()
+        // As an older version left them, plus one you took off the calendar yourself later.
+        for id in engine.document.events.map(\.id) { engine.removeFromCalendar(id) }
+        #expect(calendar.items.isEmpty)
+        engine.addHeldScheduleEventsIfNeeded()
+        #expect(calendar.items.count == 3)
+        engine.removeFromCalendar(engine.document.events[0].id)
+        engine.addHeldScheduleEventsIfNeeded()
+        #expect(calendar.items.count == 2)
+    }
+
     @Test func stoppingWhenNotScanningDoesNothing() {
         let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
         engine.stopScan()
@@ -594,6 +613,81 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(context.promptText.contains("These 2 photos"))
         #expect(context.promptText.contains("Photo 1: no QR codes"))
         #expect(context.promptText.contains("Photo 2: QR codes"))
+    }
+}
+
+/// A plain image with no text, which the on-device check would never send.
+private func blankImage(_ gray: CGFloat) -> Data {
+    let context = CGContext(
+        data: nil, width: 200, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+    )!
+    context.setFillColor(CGColor(gray: gray, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+    let output = NSMutableData()
+    let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+    CGImageDestinationFinalize(destination)
+    return output as Data
+}
+
+@MainActor @Suite struct DropTests {
+    private func engine(_ extractor: FakeExtractor) -> (FlyersEngine, FakePhotos) {
+        var fake: FakePhotos!
+        let (engine, _) = makeEngine(photos: [], extractor: extractor, photoSource: { fake = $0 })
+        return (engine, fake)
+    }
+
+    @Test func aDroppedFlyerIsSavedHereAndPhotosIsLeftAlone() async throws {
+        let (engine, fake) = engine(FakeExtractor { flyer() })
+        let new = await engine.scanDropped([DroppedPhoto(data: textImage(), takenAt: nil)])
+        #expect(new.count == 1)
+        let saved = try #require(engine.document.flyers.first)
+        #expect(saved.photoFiles?.count == 1)
+        #expect(saved.photosInLibrary == false)
+        #expect(fake.deleted.isEmpty)
+        #expect(engine.flyersOnlyInLibrary.isEmpty)
+        #expect(engine.dropSummary == "From your drop: 1 new event")
+    }
+
+    @Test func theSameImageDroppedTwiceIsOnlyPaidForOnce() async {
+        let extractor = FakeExtractor { flyer() }
+        let (engine, _) = engine(extractor)
+        let photo = DroppedPhoto(data: textImage(), takenAt: nil)
+        await engine.scanDropped([photo, photo])
+        await engine.scanDropped([photo])
+        #expect(extractor.calls == 1)
+        #expect(engine.dropSummary == "From your drop: 0 new events, 1 already scanned")
+    }
+
+    @Test func droppedPhotosSkipTheTextCheck() async {
+        let extractor = FakeExtractor { ExtractionResult(isEventFlyer: false) }
+        let (engine, _) = engine(extractor)
+        await engine.scanDropped([DroppedPhoto(data: blankImage(0.5), takenAt: nil)])
+        #expect(extractor.calls == 1)
+    }
+
+    @Test func droppedPhotosTakenTogetherAreReadTogether() async {
+        let extractor = FakeExtractor { ExtractionResult(isEventFlyer: false) }
+        let (engine, _) = engine(extractor)
+        let start = Date()
+        await engine.scanDropped([
+            DroppedPhoto(data: blankImage(0.1), takenAt: start),
+            DroppedPhoto(data: blankImage(0.2), takenAt: start.addingTimeInterval(40)),
+            DroppedPhoto(data: blankImage(0.3), takenAt: nil),
+            DroppedPhoto(data: blankImage(0.4), takenAt: nil),
+        ])
+        #expect(extractor.photoCounts == [2, 1, 1])
+    }
+
+    @Test func aDropWaitsForARunningScan() async {
+        let extractor = FakeExtractor { flyer() }
+        let (engine, _) = makeEngine(extractor: extractor)
+        extractor.onCall = {
+            Task { await engine.scanDropped([DroppedPhoto(data: blankImage(0.5), takenAt: nil)]) }
+        }
+        await engine.scan()
+        #expect(extractor.calls == 1)
     }
 }
 

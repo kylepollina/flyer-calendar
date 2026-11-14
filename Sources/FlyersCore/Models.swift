@@ -237,9 +237,11 @@ public struct Flyer: Codable, Identifiable, Equatable, Sendable {
     public init(
         id: UUID, assetID: String, takenAt: Date, title: String?, reason: String,
         confidence: Confidence, thumbnailFile: String?, assetIDs: [String]? = nil,
-        latitude: Double? = nil, longitude: Double? = nil, photoFiles: [String]? = nil
+        latitude: Double? = nil, longitude: Double? = nil, photoFiles: [String]? = nil,
+        photosInLibrary: Bool? = nil
     ) {
         self.photoFiles = photoFiles
+        self.photosInLibrary = photosInLibrary
         self.latitude = latitude
         self.longitude = longitude
         self.id = id
@@ -307,6 +309,8 @@ public struct AppDocument: Codable, Equatable, Sendable {
     public var scanPaused: Bool?
     /// True once events added before Open in Flyers links existed have been given one.
     public var appLinksAdded: Bool?
+    /// True once repeating events that older versions held back have been sent to the calendar.
+    public var heldEventsAdded: Bool?
 
     public init() {}
 }

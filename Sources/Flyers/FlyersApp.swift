@@ -167,6 +167,7 @@ final class AppModel: ObservableObject {
         }
         engine.reconcileWithCalendar()
         engine.addAppLinksIfNeeded()
+        engine.addHeldScheduleEventsIfNeeded()
         scheduleScans()
         scanIfReady()
     }
@@ -324,8 +325,8 @@ enum DemoData {
             featured,
             linkable,
             event("Winter craft market", flyer: market, offset: 16, time: nil, location: "Park pavilion"),
-            event("Group fitness", flyer: schedule, offset: 3, rrule: "FREQ=WEEKLY;BYDAY=MO", state: .available),
-            event("Trivia night", flyer: schedule, offset: 4, rrule: "FREQ=WEEKLY;BYDAY=TU", state: .available),
+            event("Group fitness", flyer: schedule, offset: 3, rrule: "FREQ=WEEKLY;BYDAY=MO"),
+            event("Trivia night", flyer: schedule, offset: 4, rrule: "FREQ=WEEKLY;BYDAY=TU"),
             event("Run club", flyer: schedule, offset: 5, rrule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=SU", state: .needsReview, problems: ["The flyer doesn't say which date comes first"]),
             event("Old show", flyer: jazz, offset: -30, state: .available),
         ]

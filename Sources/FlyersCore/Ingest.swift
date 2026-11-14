@@ -2,10 +2,6 @@ import Foundation
 
 /// Turns the model's answer into stored events. No I/O, so every placement rule is testable.
 public enum Ingest {
-    /// With this many repeating events, a flyer is a schedule. Its repeating events stay in the app
-    /// until you pick them, so one flyer can't flood the calendar.
-    public static let scheduleThreshold = 3
-
     public static func events(
         from result: ExtractionResult,
         flyerID: UUID,
@@ -15,7 +11,6 @@ public enum Ingest {
         existingFingerprints: Set<String>
     ) -> [FlyerEvent] {
         guard result.isEventFlyer else { return [] }
-        let repeating = result.events.filter { $0.rrule != nil }.count
         var seen = existingFingerprints
         var output: [FlyerEvent] = []
 
@@ -62,8 +57,6 @@ public enum Ingest {
                 event.state = .available
             } else if result.confidence == .low || !event.problems.isEmpty {
                 event.state = .needsReview
-            } else if extracted.rrule != nil && repeating >= scheduleThreshold {
-                event.state = .available
             } else if settings.addMode == .review {
                 event.state = .needsReview
             }

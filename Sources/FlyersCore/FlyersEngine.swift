@@ -12,6 +12,8 @@ public final class FlyersEngine: ObservableObject {
     @Published public private(set) var isStopping = false
     /// A problem that needs you, such as a rejected key.
     @Published public private(set) var alertMessage: String?
+    /// What the last drop found, until you dismiss it.
+    @Published public private(set) var dropSummary: String?
     /// The events the last delete removed, for Undo.
     @Published public private(set) var lastDeletedIDs: [UUID] = []
 
@@ -129,6 +131,81 @@ public final class FlyersEngine: ObservableObject {
 
     public var isPaused: Bool { document.scanPaused == true }
 
+    public func clearDropSummary() { dropSummary = nil }
+
+    /// Scans images you drop on the window. They skip the on-device text check, since you chose
+    /// them, and photos taken within a couple of minutes of each other are read together.
+    /// Returns the new events, so the window can show them.
+    @discardableResult
+    public func scanDropped(_ dropped: [DroppedPhoto]) async -> [UUID] {
+        guard !dropped.isEmpty else { return [] }
+        guard !isScanning else {
+            alertMessage = "A scan is running. Drop the photos again when it's done."
+            return []
+        }
+        guard let key = apiKey(), !key.isEmpty else {
+            alertMessage = "Add your API key in Settings to start scanning."
+            return []
+        }
+        isScanning = true
+        alertMessage = nil
+        dropSummary = nil
+        defer {
+            isScanning = false
+            isStopping = false
+            scanProgress = nil
+        }
+
+        var originals: [String: Data] = [:]
+        var dated: [PhotoCandidate] = []
+        var undated: [PhotoCandidate] = []
+        var alreadyScanned = 0
+        for photo in dropped {
+            let id = photo.id
+            guard originals[id] == nil else { continue }
+            if let record = document.photos[id], record.status != .failed {
+                alreadyScanned += 1
+                continue
+            }
+            originals[id] = photo.data
+            let candidate = PhotoCandidate(id: id, takenAt: photo.takenAt ?? Date(), latitude: photo.latitude, longitude: photo.longitude)
+            if photo.takenAt == nil { undated.append(candidate) } else { dated.append(candidate) }
+        }
+        // Without a date there's no telling which photos go together, so each is read alone.
+        let groups = PhotoGrouping.groups(dated) + undated.map { [$0] }
+        let before = Set(document.events.map(\.id))
+        let total = originals.count
+        var added = 0
+        var failed = 0
+        var checked = 0
+        for group in groups {
+            if isStopping { break }
+            let first = checked + 1
+            checked += group.count
+            scanProgress = group.count == 1
+                ? "Checking dropped photo \(first) of \(total)"
+                : "Checking dropped photos \(first)–\(checked) of \(total)"
+            do {
+                let outcome = try await process(group, apiKey: key, originals: originals)
+                added += outcome.added
+                failed += outcome.failed
+            } catch let stop as StopScan {
+                alertMessage = stop.reason
+                break
+            } catch {
+                failed += group.count
+                for candidate in group { record(candidate.id, status: .failed, error: String(describing: error)) }
+            }
+        }
+
+        var parts = [added == 1 ? "1 new event" : "\(added) new events"]
+        if alreadyScanned > 0 { parts.append("\(alreadyScanned) already scanned") }
+        if failed > 0 { parts.append("\(failed) couldn't be read") }
+        dropSummary = "From your drop: " + parts.joined(separator: ", ")
+        persist()
+        return document.events.map(\.id).filter { !before.contains($0) }
+    }
+
     /// Stops after the current photo, whose request may already be paid for. Stays paused
     /// until you start a scan yourself, so the next scheduled scan can't pick it back up.
     public func stopScan() {
@@ -153,8 +230,9 @@ public final class FlyersEngine: ObservableObject {
         var worthSending: Bool
     }
 
-    private func prepare(_ candidate: PhotoCandidate) async throws -> PreparedPhoto {
-        let data = try await photos.imageData(id: candidate.id)
+    private func prepare(_ candidate: PhotoCandidate, original: Data?) async throws -> PreparedPhoto {
+        let data: Data
+        if let original { data = original } else { data = try await photos.imageData(id: candidate.id) }
         return try await ImageWorker.run {
             guard let image = ImageTools.decode(data), let jpeg = ImageTools.jpeg(image, maxEdge: 1568) else {
                 throw ExtractionError.permanent("The image couldn't be decoded")
@@ -171,12 +249,17 @@ public final class FlyersEngine: ObservableObject {
     /// Reads a group of photos taken moments apart in one request, so details on one photo,
     /// like a post's title, reach the events on the others.
     /// `saved` lists the photos whose copies are now kept in Flyers.
-    private func process(_ group: [PhotoCandidate], apiKey: String) async throws -> (added: Int, failed: Int, saved: [String]) {
+    /// `originals` holds dropped images, which aren't in your library. Those skip the on-device
+    /// text check and are never removed from Photos.
+    private func process(
+        _ group: [PhotoCandidate], apiKey: String, originals: [String: Data] = [:]
+    ) async throws -> (added: Int, failed: Int, saved: [String]) {
+        let isDrop = !originals.isEmpty
         var failed = 0
         var prepared: [PreparedPhoto] = []
         for candidate in group {
             do {
-                prepared.append(try await prepare(candidate))
+                prepared.append(try await prepare(candidate, original: originals[candidate.id]))
             } catch let error as ExtractionError {
                 failed += 1
                 record(candidate.id, status: .failed, error: error.description, attempts: maxAttempts)
@@ -187,11 +270,11 @@ public final class FlyersEngine: ObservableObject {
         }
         // The group is sent when any photo looks like an event. Others with text go along for
         // context, and ones with almost no text, like a selfie, never leave this Mac.
-        let worthSending = prepared.contains(where: \.worthSending)
-        for photo in prepared where !worthSending || !photo.hasText {
+        let worthSending = isDrop || prepared.contains(where: \.worthSending)
+        for photo in prepared where !isDrop && (!worthSending || !photo.hasText) {
             record(photo.candidate.id, status: .skippedByFilter)
         }
-        let sending = worthSending ? prepared.filter(\.hasText) : []
+        let sending = isDrop ? prepared : worthSending ? prepared.filter(\.hasText) : []
         guard let lead = sending.first else { return (0, failed, []) }
         let ids = sending.map(\.candidate.id)
 
@@ -244,13 +327,14 @@ public final class FlyersEngine: ObservableObject {
         if !new.isEmpty {
             let usedIDs = used.map(\.candidate.id)
             let files = savePhotos(used.map(\.original), flyerID: flyerID)
-            if files != nil { saved = usedIDs }
+            if files != nil && !isDrop { saved = usedIDs }
             document.flyers.append(Flyer(
                 id: flyerID, assetID: main.candidate.id, takenAt: main.candidate.takenAt, title: result.flyerTitle,
                 reason: result.reason, confidence: result.confidence, thumbnailFile: thumbnailName,
                 assetIDs: usedIDs.count > 1 ? usedIDs : nil,
                 latitude: coordinates?.latitude, longitude: coordinates?.longitude,
-                photoFiles: files
+                photoFiles: files,
+                photosInLibrary: isDrop ? false : nil
             ))
             document.events.append(contentsOf: new)
         }
@@ -532,6 +616,19 @@ public final class FlyersEngine: ObservableObject {
             document.appLinksAdded = true
             persist()
         }
+    }
+
+    /// Flyers used to hold back repeating events on a flyer with three or more of them, for you to
+    /// add by hand. Those now go to the calendar like everything else, once.
+    public func addHeldScheduleEventsIfNeeded(today: Day = .today) {
+        guard document.heldEventsAdded != true else { return }
+        let held = document.events.filter { $0.state == .available && $0.rrule != nil && $0.calendarItemID == nil }
+        let counts = Dictionary(grouping: held, by: \.flyerID).mapValues(\.count)
+        for event in held where (counts[event.flyerID] ?? 0) >= 3 && !event.isOver(today: today) {
+            change(event.id) { $0.state = document.settings.addMode == .review ? .needsReview : .queued }
+        }
+        document.heldEventsAdded = true
+        flushQueue()
     }
 
     /// Where a link should land. Nil if the event no longer exists here.

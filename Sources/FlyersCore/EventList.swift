@@ -2,24 +2,11 @@ import Foundation
 
 /// How the main list is grouped. It lives here, not in the views, so it can be tested.
 public enum EventList {
-    public enum Row: Identifiable, Equatable {
-        case event(FlyerEvent, next: Day?)
-        /// Optional repeating events from one schedule flyer, shown as one expandable row.
-        case series(flyerID: UUID, events: [FlyerEvent], next: Day)
-
-        public var id: UUID {
-            switch self {
-            case .event(let event, _): return event.id
-            case .series(let flyerID, _, _): return flyerID
-            }
-        }
-
-        var sortDay: Day? {
-            switch self {
-            case .event(_, let next): return next
-            case .series(_, _, let next): return next
-            }
-        }
+    public struct Row: Identifiable, Equatable {
+        public var event: FlyerEvent
+        /// The next occurrence, for a repeating event.
+        public var next: Day?
+        public var id: UUID { event.id }
     }
 
     public struct Section: Identifiable, Equatable {
@@ -30,26 +17,12 @@ public enum EventList {
 
     public static func upcoming(_ events: [FlyerEvent], today: Day) -> [Section] {
         let live = events.filter { !$0.isHidden && $0.state != .needsReview && !$0.isOver(today: today) }
-        var rows: [Row] = []
-        var seriesByFlyer: [UUID: [FlyerEvent]] = [:]
-        for event in live {
-            if event.state == .available && event.rrule != nil {
-                seriesByFlyer[event.flyerID, default: []].append(event)
-            } else {
-                rows.append(.event(event, next: event.nextDay(onOrAfter: today)))
-            }
-        }
-        for (flyerID, group) in seriesByFlyer {
-            let sorted = group.sorted { ($0.nextDay(onOrAfter: today) ?? today) < ($1.nextDay(onOrAfter: today) ?? today) }
-            if let next = sorted.first?.nextDay(onOrAfter: today) {
-                rows.append(.series(flyerID: flyerID, events: sorted, next: next))
-            }
-        }
+        var rows = live.map { Row(event: $0, next: $0.nextDay(onOrAfter: today)) }
         rows.sort(by: { sortKey($0) < sortKey($1) })
 
         var sections: [Section] = []
         for row in rows {
-            let title = row.sortDay.map { bucket($0, today: today) } ?? "No date"
+            let title = row.next.map { bucket($0, today: today) } ?? "No date"
             if sections.last?.title == title {
                 sections[sections.count - 1].rows.append(row)
             } else {
@@ -79,7 +52,16 @@ public enum EventList {
             .map { $0 }
     }
 
-    private static func sortKey(_ row: Row) -> Int { row.sortDay?.number ?? Int.max }
+    private static func sortKey(_ row: Row) -> Int { row.next?.number ?? Int.max }
+
+    /// Everything still showing that came from one flyer, soonest first, to see or delete together.
+    public static func fromFlyer(_ flyerID: UUID, in events: [FlyerEvent], today: Day) -> [FlyerEvent] {
+        events.filter { $0.flyerID == flyerID && !$0.isHidden }.sorted {
+            let first = $0.nextDay(onOrAfter: today) ?? $0.startDay
+            let second = $1.nextDay(onOrAfter: today) ?? $1.startDay
+            return (first?.number ?? Int.max, $0.name) < (second?.number ?? Int.max, $1.name)
+        }
+    }
 
     private static let monthFormatter: DateFormatter = {
         let formatter = DateFormatter()

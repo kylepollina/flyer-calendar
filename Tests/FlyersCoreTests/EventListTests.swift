@@ -37,31 +37,22 @@ private func makeEvent(
         #expect(sections.isEmpty)
     }
 
-    @Test func optionalRepeatingEventsCollapseIntoOneRowPerFlyer() {
+    @Test func everyEventFromOnePhotoIsListedSoonestFirst() {
         let flyer = UUID()
-        let sections = EventList.upcoming([
-            makeEvent("A", start: "2026-11-09", rrule: "FREQ=WEEKLY;BYDAY=MO", state: .available, flyer: flyer),
-            makeEvent("B", start: "2026-11-04", rrule: "FREQ=WEEKLY;BYDAY=WE", state: .available, flyer: flyer),
-        ], today: today)
-        #expect(sections.count == 1)
-        guard case .series(let id, let events, let next)? = sections.first?.rows.first else {
-            Issue.record("expected a series")
-            return
-        }
-        #expect(id == flyer)
-        #expect(events.map(\.name) == ["B", "A"])
-        #expect(next == Day(iso: "2026-11-04"))
+        let events = [
+            makeEvent("B", start: "2026-11-09", rrule: "FREQ=WEEKLY;BYDAY=MO", flyer: flyer),
+            makeEvent("A", start: "2026-11-04", state: .available, flyer: flyer),
+            makeEvent("Gone", start: "2026-11-04", state: .deleted, flyer: flyer),
+            makeEvent("Elsewhere", start: "2026-11-04"),
+        ]
+        #expect(EventList.fromFlyer(flyer, in: events, today: today).map(\.name) == ["A", "B"])
     }
 
     @Test func aRepeatingEventOnTheCalendarIsItsOwnRowAtItsNextDate() {
         let sections = EventList.upcoming([
             makeEvent("Weekly", start: "2026-10-05", rrule: "FREQ=WEEKLY;BYDAY=MO"),
         ], today: today)
-        guard case .event(_, let next)? = sections.first?.rows.first else {
-            Issue.record("expected an event")
-            return
-        }
-        #expect(next == Day(iso: "2026-11-09"))
+        #expect(sections.first?.rows.first?.next == Day(iso: "2026-11-09"))
     }
 
     @Test func aFinishedRepeatMovesToPast() {

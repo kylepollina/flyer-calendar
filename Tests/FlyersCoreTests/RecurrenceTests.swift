@@ -107,14 +107,14 @@ private func day(_ iso: String) -> Day { Day(iso: iso)! }
         #expect(events.first?.state == .queued)
     }
 
-    @Test func scheduleFlyersOnlyQueueTheirDatedEvents() {
+    @Test func everyEventOnABusyFlyerGoesToTheCalendar() {
         let events = run([
             ExtractedEvent(name: "A", startDate: "2026-04-20", rrule: "FREQ=WEEKLY;BYDAY=MO"),
             ExtractedEvent(name: "B", startDate: "2026-04-21", rrule: "FREQ=WEEKLY;BYDAY=TU"),
             ExtractedEvent(name: "C", startDate: "2026-04-22", rrule: "FREQ=WEEKLY;BYDAY=WE"),
             ExtractedEvent(name: "Skate", startDate: "2026-04-21"),
         ])
-        #expect(events.map(\.state) == [.available, .available, .available, .queued])
+        #expect(events.map(\.state) == [.queued, .queued, .queued, .queued])
     }
 
     @Test func aRuleThatMissesTheStartGoesToReview() {

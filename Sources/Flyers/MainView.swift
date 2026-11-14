@@ -19,9 +19,9 @@ struct MainView: View {
     /// What to select once a link's tab switch has happened.
     @State private var linkedSelection: UUID?
     @State private var linkMessage: String?
-    /// Schedules showing their events in the list, by flyer.
-    @State private var expandedSeries: Set<UUID> = []
+    @State private var isShowingMap = false
     @State private var photoViewer: PhotoViewerItem?
+    @State private var isDropTargeted = false
     /// Flyers left with no events after a delete, waiting for you to choose whether to delete their photos.
     @State private var orphanedFlyers: [Flyer] = []
 
@@ -41,6 +41,13 @@ struct MainView: View {
                         .overlay(alignment: .bottom) { notices }
                         .toolbar {
                             ToolbarItem(placement: .primaryAction) {
+                                Toggle(isOn: $isShowingMap) {
+                                    Label("Map", systemImage: "map")
+                                }
+                                .keyboardShortcut("m", modifiers: [.command, .shift])
+                                .help("Show every event on a map (⇧⌘M)")
+                            }
+                            ToolbarItem(placement: .primaryAction) {
                                 Button {
                                     Task { await engine.scan() }
                                 } label: {
@@ -53,6 +60,13 @@ struct MainView: View {
                         }
                 }
                 .background { tabShortcuts }
+                .onDrop(of: DropLoader.types, isTargeted: $isDropTargeted, perform: scanDrop)
+                .overlay {
+                    if isDropTargeted {
+                        DropTargetOverlay().transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.12), value: isDropTargeted)
                 .overlay {
                     if let item = photoViewer {
                         PhotoViewer(item: item) { photoViewer = nil }
@@ -109,11 +123,25 @@ struct MainView: View {
             if tab == .review && new < old && !model.isShowingSettings { selection = firstRowID(in: .review) }
         }
         .onChange(of: selection) {
-            if selection != nil { model.isShowingSettings = false }
+            if selection != nil {
+                model.isShowingSettings = false
+                isShowingMap = false
+            }
+        }
+        .onChange(of: isShowingMap) {
+            if isShowingMap {
+                model.isShowingSettings = false
+                selection = nil
+            } else if selection == nil && !model.isShowingSettings {
+                selection = firstRowID(in: tab)
+            }
         }
         .onChange(of: model.isShowingSettings) {
             // Clears the row, so clicking it again leaves the settings page.
-            if model.isShowingSettings { selection = nil }
+            if model.isShowingSettings {
+                selection = nil
+                isShowingMap = false
+            }
         }
         .onChange(of: model.eventToReveal) {
             guard let id = model.eventToReveal else { return }
@@ -157,8 +185,7 @@ struct MainView: View {
     /// Switches to the list that holds the event and selects it.
     private func reveal(_ id: UUID) {
         guard let event = engine.event(id: id) else { return }
-        // The event may be inside a schedule, which has to be open for its row to show.
-        expandedSeries.insert(event.flyerID)
+        isShowingMap = false
         let target: ListTab = event.state == .needsReview ? .review : event.isOver(today: today) ? .past : .upcoming
         if target == tab {
             selection = event.id
@@ -173,7 +200,7 @@ struct MainView: View {
     /// Changes whenever a notice appears or goes away, which drives the animation.
     private var noticeKey: String {
         [
-            linkMessage, engine.alertMessage, engine.scanProgress,
+            linkMessage, engine.dropSummary, engine.alertMessage, engine.scanProgress,
             engine.isPaused && !engine.isScanning ? "paused" : nil,
             engine.lastDeletedIDs.isEmpty ? nil : "\(engine.lastDeletedIDs.count)",
         ]
@@ -188,6 +215,11 @@ struct MainView: View {
                 if let linkMessage {
                     Notice(systemImage: "link", text: linkMessage, tint: .secondary) {
                         Button("Dismiss") { self.linkMessage = nil }
+                    }
+                }
+                if let summary = engine.dropSummary {
+                    Notice(systemImage: "photo.badge.checkmark", text: summary, tint: .secondary) {
+                        Button("Dismiss") { engine.clearDropSummary() }
                     }
                 }
                 if let message = engine.alertMessage {
@@ -292,7 +324,7 @@ struct MainView: View {
                 List(selection: $selection) {
                     ForEach(sections) { section in
                         Section(section.title) {
-                            ForEach(section.rows) { row in rowView(row) }
+                            ForEach(section.rows) { row in eventRow(row.event, day: row.next) }
                         }
                     }
                 }
@@ -327,66 +359,11 @@ struct MainView: View {
     private func firstRowID(in tab: ListTab) -> UUID? {
         switch tab {
         case .upcoming:
-            switch EventList.upcoming(engine.document.events, today: today).first?.rows.first {
-            case .event(let event, _): return event.id
-            case .series(let flyerID, _, _): return flyerID
-            case nil: return nil
-            }
+            return EventList.upcoming(engine.document.events, today: today).first?.rows.first?.id
         case .review:
             return EventList.needingReview(engine.document.events).first?.id
         case .past:
             return EventList.past(engine.document.events, today: today).first?.id
-        }
-    }
-
-    @ViewBuilder private func rowView(_ row: EventList.Row) -> some View {
-        switch row {
-        case .event(let event, let next):
-            eventRow(event, day: next)
-        case .series(let flyerID, let events, let next):
-            let flyer = engine.flyer(id: flyerID)
-            let isExpanded = expandedSeries.contains(flyerID)
-            // Not a DisclosureGroup, whose leading chevron would push this thumbnail out of line
-            // with the rows around it. Selecting the row opens the schedule, and the chevron
-            // only shows or hides its events.
-            HStack(spacing: 8) {
-                RowLabel(
-                    title: flyer?.title ?? "Weekly schedule",
-                    subtitle: "\(events.count) repeating events",
-                    detail: "Next \(EventFormat.shortDay(next))",
-                    thumbnail: thumbnail(flyer),
-                    repeats: true,
-                    status: nil
-                )
-                Button {
-                    withAnimation(.snappy) {
-                        if isExpanded { expandedSeries.remove(flyerID) } else { expandedSeries.insert(flyerID) }
-                    }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .fontWeight(.semibold)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(isExpanded ? "Hide these events" : "Show these events")
-            }
-            .tag(flyerID)
-            .swipeActions(edge: .trailing) {
-                Button(role: .destructive) { delete(events.map(\.id)) } label: { Label("Delete", systemImage: "trash") }
-            }
-            .contextMenu {
-                Button("Delete all \(events.count)", role: .destructive) { delete(events.map(\.id)) }
-            }
-            if isExpanded {
-                // They share the schedule's flyer, which the row above already shows.
-                ForEach(events) {
-                    eventRow($0, day: $0.nextDay(onOrAfter: today), showsThumbnail: false)
-                        .padding(.leading, 54)
-                }
-            }
         }
     }
 
@@ -436,19 +413,31 @@ struct MainView: View {
         return start + " Flyers has the only copy, so \(it) can't be recovered."
     }
 
+    /// Scans dropped images, then shows the first new event.
+    private func scanDrop(_ providers: [NSItemProvider]) -> Bool {
+        Task {
+            let photos = await DropLoader.load(providers)
+            guard !photos.isEmpty else {
+                linkMessage = "Only images can be scanned."
+                return
+            }
+            let new = await engine.scanDropped(photos)
+            if let first = new.first {
+                model.isShowingSettings = false
+                reveal(first)
+            }
+        }
+        return true
+    }
+
     private func viewPhoto(of flyer: Flyer?) {
         guard let flyer else { return }
         photoViewer = PhotoViewerItem(assetIDs: PhotoRef.all(for: flyer, store: engine.store), thumbnail: thumbnail(flyer))
     }
 
     private func deleteSelection() {
-        guard let selection else { return }
-        if engine.event(id: selection) != nil {
-            delete([selection])
-        } else {
-            // A selected series is one row for all its optional events.
-            delete(engine.visibleEvents.filter { $0.flyerID == selection && $0.state == .available && $0.rrule != nil }.map(\.id))
-        }
+        guard let selection, engine.event(id: selection) != nil else { return }
+        delete([selection])
     }
 
     // MARK: Detail
@@ -456,20 +445,16 @@ struct MainView: View {
     @ViewBuilder private var detail: some View {
         if model.isShowingSettings {
             SettingsView(model: model, engine: engine)
+        } else if isShowingMap {
+            EventsMap(engine: engine, thumbnail: { thumbnail(engine.flyer(id: $0.flyerID)) }) { reveal($0) }
         } else if let selection, let event = engine.event(id: selection), !event.isHidden {
             EventDetail(
                 engine: engine, event: event, thumbnail: thumbnail(engine.flyer(id: event.flyerID)),
-                onViewPhoto: { viewPhoto(of: engine.flyer(id: event.flyerID)) }
-            ) {
-                delete([event.id])
-            }
-            .id(event.id)
-        } else if let selection, let flyer = engine.flyer(id: selection) {
-            SeriesDetail(
-                engine: engine, flyer: flyer, thumbnail: thumbnail(flyer),
-                events: engine.visibleEvents.filter { $0.flyerID == selection && $0.state == .available && $0.rrule != nil }
+                onViewPhoto: { viewPhoto(of: engine.flyer(id: event.flyerID)) },
+                onSelect: { self.selection = $0 },
+                onDelete: delete
             )
-            .id(flyer.id)
+            .id(event.id)
         } else if firstRowID(in: tab) != nil {
             ContentUnavailableView("Select an event", systemImage: "photo.on.rectangle.angled")
         } else {
@@ -655,8 +640,15 @@ struct EventDetail: View {
     let event: FlyerEvent
     let thumbnail: NSImage?
     let onViewPhoto: () -> Void
-    let onDelete: () -> Void
+    let onSelect: (UUID) -> Void
+    let onDelete: ([UUID]) -> Void
     @State private var isEditing = false
+    @State private var isConfirmingDeleteAll = false
+
+    /// Every event that came from the same photo, this one included.
+    private var fromSamePhoto: [FlyerEvent] {
+        EventList.fromFlyer(event.flyerID, in: engine.document.events, today: .today)
+    }
     @State private var pendingLink: URL?
 
     private var flyer: Flyer? { engine.flyer(id: event.flyerID) }
@@ -681,6 +673,16 @@ struct EventDetail: View {
                     Text(details).textSelection(.enabled)
                 }
             }
+            if fromSamePhoto.count > 1 { samePhotoCard }
+        }
+        .confirmationDialog(
+            "Delete all \(fromSamePhoto.count) events from this photo?",
+            isPresented: $isConfirmingDeleteAll
+        ) {
+            Button("Delete \(fromSamePhoto.count) Events", role: .destructive) { onDelete(fromSamePhoto.map(\.id)) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They also come off your calendar. You can undo this right after.")
         }
         .sheet(isPresented: $isEditing) { EditEventSheet(engine: engine, event: event) }
         // Starts loading the original now, so it's ready when you open the photo.
@@ -756,7 +758,7 @@ struct EventDetail: View {
                 .glassButton()
                 .help("View the full photo")
                 Spacer(minLength: 0)
-                Button(role: .destructive, action: onDelete) {
+                Button(role: .destructive) { onDelete([event.id]) } label: {
                     Label("Delete", systemImage: "trash").labelStyle(.iconOnly)
                 }
                 .glassButton()
@@ -815,10 +817,41 @@ struct EventDetail: View {
         }
     }
 
-    private var photoCoordinate: CLLocationCoordinate2D? {
-        guard let latitude = flyer?.latitude, let longitude = flyer?.longitude else { return nil }
-        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    /// The other events read from this photo, so a flyer that added too much is quick to clear out.
+    private var samePhotoCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("\(fromSamePhoto.count) events from this photo").font(.headline)
+                    Spacer()
+                    Button("Delete All…", role: .destructive) { isConfirmingDeleteAll = true }
+                }
+                ForEach(fromSamePhoto) { other in
+                    Button { onSelect(other.id) } label: {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(other.name).fontWeight(other.id == event.id ? .semibold : .regular)
+                                Text(other.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(other, day: nil))
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            if other.id == event.id {
+                                Text("This event").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(other.id == event.id)
+                }
+            }
+        }
     }
+
+    private var photoCoordinate: CLLocationCoordinate2D? { flyer?.coordinate }
 
     private var statusSymbol: String {
         switch event.state {
@@ -835,49 +868,6 @@ struct EventDetail: View {
         case .queued: return "Waiting for a calendar"
         case .needsReview: return "Waiting for you to check it"
         default: return "Not on your calendar"
-        }
-    }
-}
-
-struct SeriesDetail: View {
-    @ObservedObject var engine: FlyersEngine
-    let flyer: Flyer
-    let thumbnail: NSImage?
-    let events: [FlyerEvent]
-
-    var body: some View {
-        DetailPage(thumbnail: thumbnail) {
-            HStack(alignment: .top, spacing: 20) {
-                if let thumbnail { FlyerPoster(image: thumbnail) }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(flyer.title ?? "Weekly schedule")
-                        .font(.system(.title, weight: .bold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("These repeat, so they stay here until you choose the ones you want on your calendar.")
-                        .foregroundStyle(.primary.opacity(0.8))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 4)
-            }
-            GlassCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(events) { event in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(event.name).fontWeight(.semibold)
-                                Text(event.recurrence.map(EventFormat.repeats) ?? "")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button { engine.addToCalendar(event.id) } label: {
-                                Label("Add", systemImage: "calendar.badge.plus")
-                            }
-                            .glassButton()
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -966,5 +956,29 @@ struct EditEventSheet: View {
             $0.details = details.isEmpty ? nil : details
         }
         dismiss()
+    }
+}
+
+/// Shown while images are dragged over the window.
+struct DropTargetOverlay: View {
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.black.opacity(0.35))
+            VStack(spacing: 10) {
+                Image(systemName: "photo.badge.plus").font(.system(size: 44))
+                Text("Drop photos to scan").font(.title2.weight(.semibold))
+                Text("Photos taken within a couple of minutes of each other are read together.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(32)
+            .glassSurface(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [10, 6]))
+                .padding(8)
+        }
+        .allowsHitTesting(false)
     }
 }
