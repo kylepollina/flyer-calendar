@@ -37,14 +37,18 @@ skips anything the phone already handled. If you never open the phone app, the M
 
 ### Before starting
 
-- [ ] Check that team K9NSF24HZ7 is a paid Apple Developer Program membership ($99 a year). iCloud sync needs it, and without it an app installed on your own iPhone stops opening after 7 days.
+- [x] Check that team K9NSF24HZ7 is a paid Apple Developer Program membership. It is, so iCloud sync is available.
 
 ### Step 1: Xcode project
 
-- [ ] Make one Xcode project with the Mac app, an iPhone app and a Share extension, all using `FlyersCore`. Swift Package Manager alone can't build an iPhone app.
-- [ ] Replace the Mac-only parts for iPhone: images (`NSImage` → `UIImage`), the zoomable photo viewer, and opening links and maps.
-- [ ] Keep the menu bar, start at login and the background scheduler Mac-only.
-- [ ] Get the iPhone app running on its own local data, to prove the shared code works on iOS.
+- [x] Make an Xcode project (`iOS/Flyers.xcodeproj`) with an iPhone app that uses `FlyersCore`.
+- [ ] Add the Mac app to that project. iCloud needs a provisioning profile, which the `build-app.sh` build can't carry.
+- [ ] Add a Share extension.
+- [x] Replace the Mac-only parts for iPhone: images, the zoomable photo viewer, and opening links and maps.
+- [ ] Edit an event on iPhone, an app icon, and the `flyers://` link from Calendar.
+- [x] Keep the menu bar, start at login and the background scheduler Mac-only.
+- [x] Get the iPhone app running on its own local data, to prove the shared code works on iOS. Scanning on the iPhone is off by default until sync exists, so it can't double up with the Mac.
+- [ ] Install it on a real iPhone from Xcode and try it.
 
 ### Step 2: iCloud sync
 
@@ -58,13 +62,14 @@ skips anything the phone already handled. If you never open the phone app, the M
 
 ### Step 3: Scanning on iPhone
 
-- [ ] Scan when you open the app, with the same 2-minute photo grouping as the Mac.
+- [x] Scan when you open the app, with the same 2-minute photo grouping as the Mac (behind the Settings switch for now).
 - [ ] Ask iOS for occasional background time with `BGProcessingTask`. It usually comes overnight while charging.
 - [ ] Share extension: share a screenshot to Flyers and get its events right away.
 
 ### Step 4: Polish
 
-- [ ] Pinch to zoom on iPhone, maps, and widgets.
+- [x] Pinch to zoom on iPhone, and maps.
+- [ ] Widgets.
 
 ## 6. v2 features
 

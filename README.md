@@ -51,3 +51,9 @@ The library is one JSON file at `~/Library/Application Support/Flyers/library.js
 ## Signing
 
 The script signs ad hoc by default. macOS ties permissions to the signature, so each rebuild can ask for Photos, Calendar and Keychain access again. To keep them, set `FLYERS_SIGN_IDENTITY` to a certificate name.
+
+## iPhone app
+
+The iPhone app is in `iOS/Flyers.xcodeproj` and uses the same `FlyersCore` package. Open the project in Xcode and run the `FlyersPhone` scheme. To try it with sample data, add `--demo` to the scheme's launch arguments.
+
+It doesn't sync with the Mac yet, so scanning on the iPhone is off until you turn it on in its Settings.

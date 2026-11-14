@@ -3,7 +3,8 @@ import PackageDescription
 
 let package = Package(
     name: "Flyers",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v15), .iOS(.v18)],
+    products: [.library(name: "FlyersCore", targets: ["FlyersCore"])],
     targets: [
         .target(name: "FlyersCore"),
         .executableTarget(name: "Flyers", dependencies: ["FlyersCore"]),
