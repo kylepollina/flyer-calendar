@@ -42,24 +42,40 @@ private final class FakeCalendar: CalendarSyncing {
     func snapshot(itemID: String) -> CalendarSnapshot? { snapshots[itemID] }
 }
 
-private struct FakePhotos: PhotoSource {
+private final class FakePhotos: PhotoSource, @unchecked Sendable {
     var list: [PhotoCandidate]
     var data: Data
+    var deleted: [[String]] = []
+    /// What Photos' confirmation answers.
+    var allowDelete = true
+
+    init(list: [PhotoCandidate], data: Data) {
+        self.list = list
+        self.data = data
+    }
 
     func candidates(since: Date, includeScreenshots: Bool) async -> [PhotoCandidate] { list }
     func imageData(id: String) async throws -> Data { data }
+    func delete(ids: [String]) async throws -> Bool {
+        guard allowDelete else { return false }
+        deleted.append(ids)
+        return true
+    }
 }
 
 private final class FakeExtractor: EventExtracting, @unchecked Sendable {
     var outcome: () throws -> ExtractionResult
     var calls = 0
+    /// How many photos each request carried.
+    var photoCounts: [Int] = []
     /// Runs during a request, to act while a scan is in progress.
     var onCall: (@MainActor @Sendable () -> Void)?
 
     init(_ outcome: @escaping () throws -> ExtractionResult) { self.outcome = outcome }
 
-    func extract(jpeg: Data, context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage) {
+    func extract(jpegs: [Data], context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage) {
         calls += 1
+        photoCounts.append(jpegs.count)
         if let onCall { await onCall() }
         return (try outcome(), TokenUsage(input: 3000, output: 400))
     }
@@ -98,16 +114,23 @@ private enum NSAttributedStringMaker {
 
 @MainActor
 private func makeEngine(
-    photos: [String] = ["p1"], calendar: FakeCalendar = FakeCalendar(), extractor: FakeExtractor,
-    key: String? = "k", setup: (inout AppSettings) -> Void = { _ in }
+    photos: [String] = ["p1"], secondsApart: TimeInterval = 600, calendar: FakeCalendar = FakeCalendar(),
+    extractor: FakeExtractor, key: String? = "k", photoSource: ((FakePhotos) -> Void)? = nil,
+    setup: (inout AppSettings) -> Void = { _ in }
 ) -> (FlyersEngine, DocumentStore) {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("flyers-\(UUID())", isDirectory: true)
     let store = DocumentStore(directory: directory)
     var document = AppDocument()
     setup(&document.settings)
-    let candidates = photos.map { PhotoCandidate(id: $0, takenAt: Date()) }
+    // Ten minutes apart by default, so each photo is read on its own.
+    let start = Date()
+    let candidates = photos.enumerated().map { index, id in
+        PhotoCandidate(id: id, takenAt: start.addingTimeInterval(Double(index) * secondsApart))
+    }
+    let fake = FakePhotos(list: candidates, data: textImage())
+    photoSource?(fake)
     let engine = FlyersEngine(
-        store: store, photos: FakePhotos(list: candidates, data: textImage()), extractor: extractor,
+        store: store, photos: fake, extractor: extractor,
         calendar: calendar, apiKey: { key }, document: document
     )
     return (engine, store)
@@ -239,6 +262,144 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         await engine.scan()
         #expect(extractor.calls == 3)
         #expect(!engine.isPaused)
+    }
+
+    @Test func photosTakenMomentsApartAreReadInOneRequest() async {
+        let extractor = FakeExtractor { flyer() }
+        let (engine, _) = makeEngine(photos: ["p1", "p2", "p3"], secondsApart: 30, extractor: extractor)
+        await engine.scan()
+        #expect(extractor.photoCounts == [3])
+        #expect(engine.document.photos.values.allSatisfy { $0.status == .extracted })
+        #expect(engine.document.flyers.first?.assetID == "p1")
+        #expect(engine.document.flyers.first?.assetIDs == ["p1", "p2", "p3"])
+        #expect(engine.document.lastScanSummary == "1 new event")
+    }
+
+    @Test func aFailedGroupRecordsEveryPhoto() async {
+        let extractor = FakeExtractor { throw ExtractionError.permanent("refused") }
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, extractor: extractor)
+        await engine.scan()
+        #expect(engine.document.lastScanSummary == "0 new events, 2 couldn't be read")
+        await engine.scan()
+        #expect(extractor.calls == 1)
+        #expect(engine.document.photos["p2"]?.status == .failed)
+    }
+
+    @Test func scheduledScansWaitForABurstToFinish() async {
+        let extractor = FakeExtractor { flyer() }
+        // Taken just now, so another screenshot may still be coming.
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, extractor: extractor)
+        await engine.scan(manual: false)
+        #expect(extractor.calls == 0)
+        #expect(engine.document.photos.isEmpty)
+        await engine.scan()
+        #expect(extractor.photoCounts == [2])
+    }
+
+    @Test func thePhotoIsOfferedOnlyWithItsLastEvent() async {
+        let extractor = FakeExtractor {
+            ExtractionResult(isEventFlyer: true, events: [
+                ExtractedEvent(name: "Chess", startDate: future.iso), ExtractedEvent(name: "Go", startDate: future.iso),
+            ])
+        }
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, extractor: extractor)
+        await engine.scan()
+        let ids = engine.document.events.map(\.id)
+        #expect(engine.flyersOnlyUsedBy([ids[0]]).isEmpty)
+        #expect(engine.flyersOnlyUsedBy(ids).map(\.allAssetIDs) == [["p1", "p2"]])
+        engine.delete([ids[0]])
+        #expect(engine.flyersOnlyUsedBy([ids[1]]).count == 1)
+    }
+
+    @Test func aFlyersPhotoIsSavedHereThenRemovedFromPhotos() async throws {
+        var fake: FakePhotos!
+        let (engine, store) = makeEngine(extractor: FakeExtractor { flyer() }, photoSource: { fake = $0 })
+        await engine.scan()
+        let saved = try #require(engine.document.flyers.first)
+        #expect(saved.photoFiles?.count == 1)
+        #expect(FileManager.default.fileExists(atPath: store.photoURL(saved.photoFiles![0]).path))
+        #expect(fake.deleted == [["p1"]])
+        #expect(saved.photosInLibrary == false)
+    }
+
+    @Test func photosThatArentFlyersStayInPhotos() async {
+        var fake: FakePhotos!
+        let (engine, _) = makeEngine(extractor: FakeExtractor { ExtractionResult(isEventFlyer: false) }, photoSource: { fake = $0 })
+        await engine.scan()
+        #expect(fake.deleted.isEmpty)
+        #expect(engine.savedPhotoNames.isEmpty)
+    }
+
+    @Test func onlyThePhotosShowingTheFlyerAreSavedAndRemoved() async {
+        var fake: FakePhotos!
+        let extractor = FakeExtractor {
+            var result = flyer()
+            result.photosUsed = [1, 3]
+            return result
+        }
+        let (engine, _) = makeEngine(photos: ["p1", "p2", "p3"], secondsApart: 30, extractor: extractor, photoSource: { fake = $0 })
+        await engine.scan()
+        #expect(engine.document.flyers.first?.allAssetIDs == ["p1", "p3"])
+        #expect(engine.document.flyers.first?.photoFiles?.count == 2)
+        #expect(fake.deleted == [["p1", "p3"]])
+    }
+
+    @Test func decliningInPhotosKeepsTheOriginalThere() async {
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() }, photoSource: { $0.allowDelete = false })
+        await engine.scan()
+        #expect(engine.document.flyers.first?.photoFiles?.count == 1)
+        #expect(engine.document.flyers.first?.mayBeInLibrary == true)
+        #expect(engine.alertMessage == nil)
+        #expect(engine.flyersOnlyInLibrary.isEmpty)
+    }
+
+    @Test func withTheSettingOffPhotosStayInPhotos() async {
+        var fake: FakePhotos!
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() }, photoSource: { fake = $0 }) {
+            $0.removesPhotosFromLibrary = false
+        }
+        await engine.scan()
+        #expect(fake.deleted.isEmpty)
+        #expect(engine.document.flyers.first?.photoFiles?.count == 1)
+    }
+
+    @Test func olderFlyersCanBeMovedIntoFlyers() async {
+        var fake: FakePhotos!
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() }, photoSource: { fake = $0 }) {
+            $0.removesPhotosFromLibrary = false
+        }
+        await engine.scan()
+        engine.deleteSavedPhotos(of: engine.document.flyers.map(\.id))
+        #expect(engine.flyersOnlyInLibrary.count == 1)
+        #expect(await engine.moveOlderPhotosIntoFlyers() == 1)
+        #expect(engine.flyersOnlyInLibrary.isEmpty)
+        #expect(engine.document.flyers.first?.photoFiles?.count == 1)
+        #expect(fake.deleted == [["p1"]])
+    }
+
+    @Test func savedPhotosOfPastEventsCanBeCleared() async throws {
+        let (engine, store) = makeEngine(extractor: FakeExtractor { flyer() })
+        await engine.scan()
+        #expect(engine.flyersWithOnlyPastEvents().isEmpty)
+        let later = future.adding(days: 1)
+        let past = engine.flyersWithOnlyPastEvents(today: later)
+        #expect(past.count == 1)
+        let name = try #require(past.first?.photoFiles?.first)
+        engine.deleteSavedPhotos(of: past.map(\.id))
+        #expect(engine.savedPhotoNames.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: store.photoURL(name).path))
+    }
+
+    @Test func theFlyerKeepsWhereThePhotoWasTaken() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("flyers-\(UUID())", isDirectory: true)
+        let photos = FakePhotos(list: [PhotoCandidate(id: "p1", takenAt: Date(), latitude: 41.9, longitude: -87.6)], data: textImage())
+        let engine = FlyersEngine(
+            store: DocumentStore(directory: directory), photos: photos, extractor: FakeExtractor { flyer() },
+            calendar: FakeCalendar(), apiKey: { "k" }
+        )
+        await engine.scan()
+        #expect(engine.document.flyers.first?.latitude == 41.9)
+        #expect(engine.document.flyers.first?.longitude == -87.6)
     }
 
     @Test func stoppingWhenNotScanningDoesNothing() {
@@ -390,6 +551,95 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(store.load().events.isEmpty)
         let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         #expect(names.contains { $0.hasPrefix("library.unreadable") })
+    }
+}
+
+@Suite struct PhotoGroupingTests {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func photos(_ offsets: [TimeInterval]) -> [PhotoCandidate] {
+        offsets.enumerated().map { PhotoCandidate(id: "p\($0.offset)", takenAt: start.addingTimeInterval($0.element)) }
+    }
+
+    @Test func aChainOfCloseShotsIsOneGroupEvenPastTwoMinutesInAll() {
+        // Each is within two minutes of the one before, as when scrolling slowly through a post.
+        let groups = PhotoGrouping.groups(photos([0, 90, 180, 270]))
+        #expect(groups.map(\.count) == [4])
+    }
+
+    @Test func aLongerGapStartsANewGroup() {
+        let groups = PhotoGrouping.groups(photos([0, 60, 600, 650, 2000]))
+        #expect(groups.map { $0.map(\.id) } == [["p0", "p1"], ["p2", "p3"], ["p4"]])
+    }
+
+    @Test func groupsAreSortedByTimeTaken() {
+        let groups = PhotoGrouping.groups(photos([60, 0]))
+        #expect(groups.first?.map(\.id) == ["p1", "p0"])
+    }
+
+    @Test func aLongBurstIsSplitToKeepRequestsSmall() {
+        let groups = PhotoGrouping.groups(photos((0..<11).map { Double($0) * 5 }))
+        #expect(groups.map(\.count) == [PhotoGrouping.maxPhotos, 11 - PhotoGrouping.maxPhotos])
+    }
+
+    @Test func aRecentBurstMayStillGrow() {
+        let group = photos([0, 30])
+        #expect(PhotoGrouping.mayStillGrow(group, now: start.addingTimeInterval(60)))
+        #expect(!PhotoGrouping.mayStillGrow(group, now: start.addingTimeInterval(200)))
+    }
+
+    @Test func severalPhotosAreLabeledInThePrompt() {
+        let code = DetectedCode(value: "https://example.com", xPercent: 50, yPercent: 80)
+        let context = PhotoContext(takenOn: Day(iso: "2026-11-12")!, coordinates: nil, codesByPhoto: [[], [code]])
+        #expect(context.promptText.contains("These 2 photos"))
+        #expect(context.promptText.contains("Photo 1: no QR codes"))
+        #expect(context.promptText.contains("Photo 2: QR codes"))
+    }
+}
+
+@Suite struct LinkAndSponsorTests {
+    @Test func linksAreCleanedAndTheFirstIsTheMainOne() {
+        let extracted = ExtractedEvent(name: "Tap", links: [
+            EventLink(label: "Tickets", url: "tickets.example.org"),
+            EventLink(label: " ", url: "https://example.org"),
+            EventLink(label: "Dupe", url: "https://tickets.example.org"),
+            EventLink(label: "Bad", url: "javascript:alert(1)"),
+        ], sponsors: ["Herald", "  ", "Tap All-Stars"])
+        let result = ExtractionResult(isEventFlyer: true, events: [extracted])
+        let event = Ingest.events(
+            from: result, flyerID: UUID(), takenOn: .today, today: .today, settings: AppSettings(), existingFingerprints: []
+        )[0]
+        #expect(event.url == "https://tickets.example.org")
+        #expect(event.links == [
+            EventLink(label: "Tickets", url: "https://tickets.example.org"),
+            EventLink(label: "Link", url: "https://example.org"),
+        ])
+        #expect(event.sponsors == ["Herald", "Tap All-Stars"])
+    }
+
+    @Test func eventsSavedBeforeMultipleLinksStillShowTheirLink() {
+        var event = makeEvent()
+        event.url = "https://old.example"
+        #expect(event.allLinks == [EventLink(label: "Link", url: "https://old.example")])
+    }
+
+    @Test func editingTheMainLinkReplacesItAndKeepsTheRest() {
+        var event = makeEvent()
+        event.url = "https://a.example"
+        event.links = [EventLink(label: "Tickets", url: "https://a.example"), EventLink(label: "Site", url: "https://b.example")]
+        event.setMainLink("https://c.example")
+        #expect(event.allLinks.map(\.url) == ["https://c.example", "https://b.example"])
+        #expect(event.allLinks.first?.label == "Tickets")
+        event.setMainLink(nil)
+        #expect(event.allLinks.map(\.url) == ["https://b.example"])
+    }
+
+    private func makeEvent() -> FlyerEvent {
+        FlyerEvent(
+            id: UUID(), flyerID: UUID(), name: "E", datePrinted: nil, startDay: nil, startTime: nil, endDay: nil,
+            endTime: nil, rrule: nil, yearInferred: false, startUncertain: false, location: nil, locationInferred: false,
+            url: nil, details: nil, state: .queued, stateBeforeDelete: nil, calendarItemID: nil, fingerprint: "f", problems: []
+        )
     }
 }
 

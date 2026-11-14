@@ -104,9 +104,14 @@ public enum LocalFilter {
         #"\b(today|tonight|tomorrow|weekly|every|doors|tickets|rsvp|register)\b"#,
     ]
 
+    /// Enough text to be worth sending alongside a photo that passed `shouldSend`, such as the
+    /// title slide of a post whose dates are on the next screenshot.
+    public static func hasText(_ text: String) -> Bool {
+        text.unicodeScalars.filter(CharacterSet.letters.contains).count >= minimumLetters
+    }
+
     public static func shouldSend(text: String, codeCount: Int) -> Bool {
-        let letters = text.unicodeScalars.filter(CharacterSet.letters.contains).count
-        guard letters >= minimumLetters else { return false }
+        guard hasText(text) else { return false }
         if codeCount > 0 { return true }
         let lowered = text.lowercased()
         return cuePatterns.contains { lowered.range(of: $0, options: .regularExpression) != nil }

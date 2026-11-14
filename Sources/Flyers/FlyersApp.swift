@@ -39,6 +39,14 @@ struct SettingsCommand: Commands {
             }
             .keyboardShortcut(",")
         }
+        // Scans only run while Flyers is running, so ⌘Q closes the window and leaves it in the
+        // menu bar. Quit Flyers in the menu bar popover stops it for real.
+        CommandGroup(replacing: .appTermination) {
+            Button("Close Flyers") {
+                NSApp.windows.filter { $0.isVisible && $0.canBecomeMain }.forEach { $0.close() }
+            }
+            .keyboardShortcut("q")
+        }
         CommandGroup(replacing: .help) {
             Button("Welcome Tour") {
                 model.isShowingTour = true
@@ -282,7 +290,10 @@ enum DemoData {
                 confidence: .high, thumbnailFile: "\(id.uuidString).jpg"
             )
         }
-        let jazz = makeFlyer("Fellowship Wednesdays", "Live jazz at Vermillion\n1508 11th Ave", .systemIndigo, .systemTeal)
+        var jazz = makeFlyer("Fellowship Wednesdays", "Live jazz at Vermillion\n1508 11th Ave", .systemIndigo, .systemTeal)
+        // Taken in Seattle, so the map finds the right Vermillion.
+        jazz.latitude = 47.614
+        jazz.longitude = -122.317
         let market = makeFlyer("Winter craft market", "Local makers, hot cider\nPark pavilion", .systemRed, .systemOrange)
         let schedule = makeFlyer("Community schedule", "Fitness · Trivia · Run club\nAll welcome", .systemGreen, .systemMint)
         document.flyers = [jazz, market, schedule]
@@ -301,8 +312,16 @@ enum DemoData {
         var linkable = event("Darelle Holden", flyer: jazz, offset: 9, location: "Vermillion, 1508 11th Ave")
         // A fixed ID, so links can be tried in demo mode.
         linkable.id = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        var featured = event("Dick Oatts and Jim Rotondi", flyer: jazz, offset: 2, location: "Vermillion, 1508 11th Ave", url: "https://www.seattlejazzfellowship.org")
+        featured.links = [
+            EventLink(label: "Tickets", url: "https://www.seattlejazzfellowship.org"),
+            EventLink(label: "Venue", url: "https://www.vermillionseattle.com"),
+        ]
+        featured.sponsors = ["Seattle Jazz Fellowship", "Vermillion Art Gallery & Bar"]
+        featured.details = "An evening of straight-ahead jazz with saxophonist Dick Oatts and trumpeter Jim Rotondi, "
+            + "followed by an open jam session. Tickets are $15 to $25, with discounts for students. All ages until 10 PM."
         document.events = [
-            event("Dick Oatts and Jim Rotondi", flyer: jazz, offset: 2, location: "Vermillion, 1508 11th Ave", url: "https://www.seattlejazzfellowship.org"),
+            featured,
             linkable,
             event("Winter craft market", flyer: market, offset: 16, time: nil, location: "Park pavilion"),
             event("Group fitness", flyer: schedule, offset: 3, rrule: "FREQ=WEEKLY;BYDAY=MO", state: .available),

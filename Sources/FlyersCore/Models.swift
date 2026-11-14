@@ -15,14 +15,20 @@ public struct ExtractedEvent: Codable, Equatable, Sendable {
     public var location: String?
     public var locationInferred: Bool
     public var url: String?
+    /// Every link for the event, such as tickets and the organizer's site. Optional so an
+    /// answer without them, from before they existed, still reads.
+    public var links: [EventLink]?
+    public var sponsors: [String]?
     public var description: String?
 
     public init(
         name: String, dateAsPrinted: String? = nil, startDate: String? = nil, startTime: String? = nil,
         endDate: String? = nil, endTime: String? = nil, yearInferred: Bool = false, rrule: String? = nil,
         startUncertain: Bool = false, location: String? = nil, locationInferred: Bool = false,
-        url: String? = nil, description: String? = nil
+        url: String? = nil, links: [EventLink]? = nil, sponsors: [String]? = nil, description: String? = nil
     ) {
+        self.links = links
+        self.sponsors = sponsors
         self.name = name
         self.dateAsPrinted = dateAsPrinted
         self.startDate = startDate
@@ -39,6 +45,17 @@ public struct ExtractedEvent: Codable, Equatable, Sendable {
     }
 }
 
+public struct EventLink: Codable, Equatable, Hashable, Sendable {
+    /// A short name for what the link is for, such as "Tickets".
+    public var label: String
+    public var url: String
+
+    public init(label: String, url: String) {
+        self.label = label
+        self.url = url
+    }
+}
+
 public enum Confidence: String, Codable, Sendable { case high, medium, low }
 
 public struct ExtractionResult: Codable, Equatable, Sendable {
@@ -47,11 +64,15 @@ public struct ExtractionResult: Codable, Equatable, Sendable {
     public var reason: String
     public var flyerTitle: String?
     public var events: [ExtractedEvent]
+    /// The numbers, from 1, of the photos that show the flyer or post. Photos taken nearby that
+    /// aren't part of it are left out, so they're never saved or removed with it.
+    public var photosUsed: [Int]?
 
     public init(
         isEventFlyer: Bool, confidence: Confidence = .high, reason: String = "",
-        flyerTitle: String? = nil, events: [ExtractedEvent] = []
+        flyerTitle: String? = nil, events: [ExtractedEvent] = [], photosUsed: [Int]? = nil
     ) {
+        self.photosUsed = photosUsed
         self.isEventFlyer = isEventFlyer
         self.confidence = confidence
         self.reason = reason
@@ -112,13 +133,20 @@ public struct FlyerEvent: Codable, Identifiable, Equatable, Sendable {
     /// Stays the same after edits, so an edited or deleted event still blocks its duplicates.
     public var fingerprint: String
     public var problems: [String]
+    /// Every link, with `url` as the main one. Optional so libraries saved before this existed still load.
+    public var links: [EventLink]?
+    /// Sponsors, presenters and partners named on the flyer.
+    public var sponsors: [String]?
 
     public init(
         id: UUID, flyerID: UUID, name: String, datePrinted: String?, startDay: Day?, startTime: String?,
         endDay: Day?, endTime: String?, rrule: String?, yearInferred: Bool, startUncertain: Bool,
         location: String?, locationInferred: Bool, url: String?, details: String?, state: EventState,
-        stateBeforeDelete: EventState?, calendarItemID: String?, fingerprint: String, problems: [String]
+        stateBeforeDelete: EventState?, calendarItemID: String?, fingerprint: String, problems: [String],
+        links: [EventLink]? = nil, sponsors: [String]? = nil
     ) {
+        self.links = links
+        self.sponsors = sponsors
         self.id = id
         self.flyerID = flyerID
         self.name = name
@@ -142,6 +170,27 @@ public struct FlyerEvent: Codable, Identifiable, Equatable, Sendable {
     }
 
     public var recurrence: Recurrence? { rrule.flatMap { try? Recurrence(rrule: $0) } }
+
+    /// The links to show, main one first. Events saved before multiple links have only `url`.
+    public var allLinks: [EventLink] {
+        var output = links ?? []
+        if let url, !output.contains(where: { $0.url == url }) {
+            output.insert(EventLink(label: "Link", url: url), at: 0)
+        }
+        return output
+    }
+
+    /// Makes `newURL` the main link, replacing the old main link in the list.
+    public mutating func setMainLink(_ newURL: String?) {
+        guard newURL != url else { return }
+        var rest = (links ?? []).filter { $0.url != url && $0.url != newURL }
+        if let newURL {
+            let label = links?.first(where: { $0.url == url })?.label ?? "Link"
+            rest.insert(EventLink(label: label, url: newURL), at: 0)
+        }
+        url = newURL
+        links = rest.isEmpty ? nil : rest
+    }
 
     public func nextDay(onOrAfter day: Day) -> Day? {
         guard let startDay else { return nil }
@@ -170,13 +219,32 @@ public struct Flyer: Codable, Identifiable, Equatable, Sendable {
     public var reason: String
     public var confidence: Confidence
     public var thumbnailFile: String?
+    /// Every photo for this flyer, in the order taken.
+    public var allAssetIDs: [String] { assetIDs ?? [assetID] }
+    /// Every photo read together for this flyer, in the order taken, when there was more than one.
+    /// Optional so that library files saved before grouping existed still load.
+    public var assetIDs: [String]?
+    /// Where the photo was taken, to look up the events' places nearby.
+    public var latitude: Double?
+    public var longitude: Double?
+    /// Full-size copies saved in Flyers, in the same order as `allAssetIDs`. Nil when none are saved.
+    public var photoFiles: [String]?
+    /// False once the photos have been deleted from your Photos library. Nil means they may still be there.
+    public var photosInLibrary: Bool?
+
+    public var mayBeInLibrary: Bool { photosInLibrary != false }
 
     public init(
         id: UUID, assetID: String, takenAt: Date, title: String?, reason: String,
-        confidence: Confidence, thumbnailFile: String?
+        confidence: Confidence, thumbnailFile: String?, assetIDs: [String]? = nil,
+        latitude: Double? = nil, longitude: Double? = nil, photoFiles: [String]? = nil
     ) {
+        self.photoFiles = photoFiles
+        self.latitude = latitude
+        self.longitude = longitude
         self.id = id
         self.assetID = assetID
+        self.assetIDs = assetIDs
         self.takenAt = takenAt
         self.title = title
         self.reason = reason
@@ -213,6 +281,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var includeScreenshots = false
     public var monthlySpendLimit = 1.0
     public var launchAtLoginSet = false
+    /// Optional so settings saved before this existed still load. Nil means on.
+    public var removePhotosFromLibrary: Bool?
+
+    public var removesPhotosFromLibrary: Bool {
+        get { removePhotosFromLibrary ?? true }
+        set { removePhotosFromLibrary = newValue }
+    }
 
     public init() {}
 }

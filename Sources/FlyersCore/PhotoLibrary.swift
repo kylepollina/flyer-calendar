@@ -18,6 +18,9 @@ public struct PhotoCandidate: Equatable, Sendable {
 public protocol PhotoSource: Sendable {
     func candidates(since: Date, includeScreenshots: Bool) async -> [PhotoCandidate]
     func imageData(id: String) async throws -> Data
+    /// Moves photos to Recently Deleted. Photos asks you to confirm, and this returns false
+    /// if you decline.
+    func delete(ids: [String]) async throws -> Bool
 }
 
 public struct PhotoLibrary: PhotoSource {
@@ -55,6 +58,21 @@ public struct PhotoLibrary: PhotoSource {
             ))
         }
         return output
+    }
+
+    /// Moves photos to Recently Deleted. Photos asks you to confirm first.
+    public func delete(ids: [String]) async throws -> Bool {
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+        // Already gone, perhaps deleted by hand, which counts as done.
+        guard assets.count > 0 else { return true }
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.deleteAssets(assets)
+            }
+            return true
+        } catch let error as PHPhotosError where error.code == .userCancelled {
+            return false
+        }
     }
 
     public func imageData(id: String) async throws -> Data {

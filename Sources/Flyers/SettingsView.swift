@@ -169,8 +169,55 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var engine: FlyersEngine
     @State private var pageWidth: CGFloat = 0
+    @State private var isMovingPhotos = false
+    @State private var isConfirmingClear = false
 
     private var settings: AppSettings { engine.document.settings }
+
+    private var photosSection: some View {
+        let saved = engine.savedPhotoNames
+        let older = engine.flyersOnlyInLibrary
+        let past = engine.flyersWithOnlyPastEvents()
+        return Section {
+            Toggle("Move flyer photos out of Photos", isOn: binding(\.removesPhotosFromLibrary))
+            LabeledContent("Saved in Flyers") {
+                Text(saved.isEmpty
+                    ? "None"
+                    : "\(saved.count) \(saved.count == 1 ? "photo" : "photos"), \(ByteCountFormatter.string(fromByteCount: engine.store.photosSize(saved), countStyle: .file))")
+            }
+            if !older.isEmpty {
+                LabeledContent("\(older.count) older \(older.count == 1 ? "flyer is" : "flyers are") only in Photos") {
+                    Button(isMovingPhotos ? "Moving…" : "Move to Flyers") {
+                        isMovingPhotos = true
+                        Task {
+                            await engine.moveOlderPhotosIntoFlyers()
+                            isMovingPhotos = false
+                        }
+                    }
+                    .disabled(isMovingPhotos || engine.isScanning)
+                }
+            }
+            LabeledContent("Photos of past events") {
+                Button("Delete \(past.count)…") { isConfirmingClear = true }
+                    .disabled(past.isEmpty)
+            }
+            .confirmationDialog(
+                "Delete the saved photos of \(past.count) past \(past.count == 1 ? "flyer" : "flyers")?",
+                isPresented: $isConfirmingClear
+            ) {
+                Button("Delete Photos", role: .destructive) { engine.deleteSavedPhotos(of: past.map(\.id)) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The events and small previews stay. Photos moved out of your library can't be recovered.")
+            }
+        } header: {
+            Text("Photos")
+        } footer: {
+            Text("Flyers keeps a copy of each flyer it finds, then moves the original from Photos to Recently Deleted. Photos asks you to confirm each time.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
     private func binding<Value>(_ path: WritableKeyPath<AppSettings, Value>) -> Binding<Value> {
         Binding(
@@ -249,6 +296,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            photosSection
             Section("General") {
                 Toggle("Start at login", isOn: Binding(
                     get: { model.launchesAtLogin },

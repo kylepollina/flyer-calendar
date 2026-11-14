@@ -41,6 +41,28 @@ public struct DocumentStore: Sendable {
         try FileManager.default.createDirectory(at: thumbnailsDirectory, withIntermediateDirectories: true)
         try data.write(to: thumbnailsDirectory.appendingPathComponent(name), options: .atomic)
     }
+
+    /// Full-size copies of flyer photos, kept here so they can leave your Photos library.
+    public var photosDirectory: URL { directory.appendingPathComponent("Photos", isDirectory: true) }
+
+    public func photoURL(_ name: String) -> URL { photosDirectory.appendingPathComponent(name) }
+
+    public func savePhoto(_ data: Data, name: String) throws {
+        try FileManager.default.createDirectory(at: photosDirectory, withIntermediateDirectories: true)
+        try data.write(to: photoURL(name), options: .atomic)
+    }
+
+    public func deletePhoto(name: String) {
+        try? FileManager.default.removeItem(at: photoURL(name))
+    }
+
+    /// Bytes used by saved photos.
+    public func photosSize(_ names: [String]) -> Int64 {
+        names.reduce(0) { total, name in
+            let size = (try? FileManager.default.attributesOfItem(atPath: photoURL(name).path)[.size] as? NSNumber)?.int64Value
+            return total + (size ?? 0)
+        }
+    }
 }
 
 /// Stores the API key in your login Keychain.

@@ -1,4 +1,5 @@
 import AppKit
+import CoreLocation
 import FlyersCore
 import SwiftUI
 
@@ -20,6 +21,9 @@ struct MainView: View {
     @State private var linkMessage: String?
     /// Schedules showing their events in the list, by flyer.
     @State private var expandedSeries: Set<UUID> = []
+    @State private var photoViewer: PhotoViewerItem?
+    /// Flyers left with no events after a delete, waiting for you to choose whether to delete their photos.
+    @State private var orphanedFlyers: [Flyer] = []
 
     private var today: Day { .today }
     private var reviewCount: Int { EventList.needingReview(engine.document.events).count }
@@ -49,7 +53,26 @@ struct MainView: View {
                         }
                 }
                 .background { tabShortcuts }
+                .overlay {
+                    if let item = photoViewer {
+                        PhotoViewer(item: item) { photoViewer = nil }
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: photoViewer?.id)
             }
+        }
+        .confirmationDialog(
+            photoCount == 1 ? "Delete the photo too?" : "Delete the \(photoCount) photos too?",
+            isPresented: Binding(get: { !orphanedFlyers.isEmpty }, set: { if !$0 { orphanedFlyers = [] } })
+        ) {
+            Button(photoCount == 1 ? "Delete Photo" : "Delete Photos", role: .destructive) {
+                let ids = orphanedFlyers.map(\.id)
+                Task { await engine.deletePhotos(of: ids) }
+            }
+            Button(photoCount == 1 ? "Keep Photo" : "Keep Photos", role: .cancel) {}
+        } message: {
+            Text(photoDeleteMessage)
         }
         .onAppear {
             // Started at login, the app stays in the menu bar unless it still needs setting up.
@@ -394,9 +417,28 @@ struct MainView: View {
         return NSImage(contentsOf: engine.store.thumbnailsDirectory.appendingPathComponent(name))
     }
 
+    /// When this removes the last event from a photo, offers to delete the photo too.
     private func delete(_ ids: [UUID]) {
         if let selection, ids.contains(selection) { self.selection = nil }
+        let flyers = engine.flyersOnlyUsedBy(ids)
         engine.delete(ids)
+        orphanedFlyers = flyers
+    }
+
+    private var photoCount: Int { orphanedFlyers.reduce(0) { $0 + $1.allAssetIDs.count } }
+
+    private var photoDeleteMessage: String {
+        let it = photoCount == 1 ? "it" : "them"
+        let start = "No other events in Flyers come from \(it)."
+        if orphanedFlyers.contains(where: \.mayBeInLibrary) {
+            return start + " Photos keeps deleted photos in Recently Deleted for 30 days."
+        }
+        return start + " Flyers has the only copy, so \(it) can't be recovered."
+    }
+
+    private func viewPhoto(of flyer: Flyer?) {
+        guard let flyer else { return }
+        photoViewer = PhotoViewerItem(assetIDs: PhotoRef.all(for: flyer, store: engine.store), thumbnail: thumbnail(flyer))
     }
 
     private func deleteSelection() {
@@ -415,7 +457,10 @@ struct MainView: View {
         if model.isShowingSettings {
             SettingsView(model: model, engine: engine)
         } else if let selection, let event = engine.event(id: selection), !event.isHidden {
-            EventDetail(engine: engine, event: event, thumbnail: thumbnail(engine.flyer(id: event.flyerID))) {
+            EventDetail(
+                engine: engine, event: event, thumbnail: thumbnail(engine.flyer(id: event.flyerID)),
+                onViewPhoto: { viewPhoto(of: engine.flyer(id: event.flyerID)) }
+            ) {
                 delete([event.id])
             }
             .id(event.id)
@@ -609,10 +654,12 @@ struct EventDetail: View {
     @ObservedObject var engine: FlyersEngine
     let event: FlyerEvent
     let thumbnail: NSImage?
+    let onViewPhoto: () -> Void
     let onDelete: () -> Void
     @State private var isEditing = false
-    @State private var isViewingPhoto = false
     @State private var pendingLink: URL?
+
+    private var flyer: Flyer? { engine.flyer(id: event.flyerID) }
 
     var body: some View {
         DetailPage(thumbnail: thumbnail) {
@@ -636,8 +683,11 @@ struct EventDetail: View {
             }
         }
         .sheet(isPresented: $isEditing) { EditEventSheet(engine: engine, event: event) }
-        .sheet(isPresented: $isViewingPhoto) {
-            FullPhotoSheet(assetID: engine.flyer(id: event.flyerID)?.assetID)
+        // Starts loading the original now, so it's ready when you open the photo.
+        .task(id: event.flyerID) {
+            if let flyer, let first = PhotoRef.all(for: flyer, store: engine.store).first {
+                PhotoCache.shared.prefetch([first])
+            }
         }
         // Flyers can link anywhere, so show the whole address before opening it.
         .confirmationDialog(
@@ -655,7 +705,7 @@ struct EventDetail: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 20) {
             if let thumbnail {
-                Button { isViewingPhoto = true } label: { FlyerPoster(image: thumbnail) }
+                Button(action: onViewPhoto) { FlyerPoster(image: thumbnail) }
                     .buttonStyle(.plain)
                     .help("View the full photo")
                     .accessibilityLabel("View the full photo")
@@ -700,7 +750,7 @@ struct EventDetail: View {
                 .glassButton()
                 .keyboardShortcut("e")
                 .help("Edit (⌘E)")
-                Button { isViewingPhoto = true } label: {
+                Button(action: onViewPhoto) {
                     Label("View photo", systemImage: "photo").labelStyle(.iconOnly)
                 }
                 .glassButton()
@@ -717,8 +767,9 @@ struct EventDetail: View {
     }
 
     @ViewBuilder private var facts: some View {
-        let link = event.url.flatMap { URL(string: $0) }
-        if event.recurrence != nil || event.location != nil || link != nil || event.datePrinted != nil {
+        let links = event.allLinks.compactMap { link in URL(string: link.url).map { (label: link.label, url: $0) } }
+        let sponsors = event.sponsors ?? []
+        if event.recurrence != nil || event.location != nil || !links.isEmpty || !sponsors.isEmpty || event.datePrinted != nil {
             GlassCard {
                 VStack(alignment: .leading, spacing: 14) {
                     if let recurrence = event.recurrence {
@@ -728,13 +779,30 @@ struct EventDetail: View {
                     }
                     if let location = event.location {
                         FactRow(symbol: "mappin.and.ellipse", label: event.locationInferred ? "Where (best guess)" : "Where") {
-                            Text(location).textSelection(.enabled)
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(location).textSelection(.enabled)
+                                LocationMap(location: location, near: photoCoordinate)
+                            }
                         }
                     }
-                    if let link {
-                        FactRow(symbol: "link", label: "Link") {
-                            Button(link.host() ?? link.absoluteString) { pendingLink = link }
-                                .buttonStyle(.link)
+                    if !links.isEmpty {
+                        FactRow(symbol: "link", label: links.count == 1 ? "Link" : "Links") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(links, id: \.url) { link in
+                                    let host = link.url.host() ?? link.url.absoluteString
+                                    let title = links.count == 1 || link.label == "Link" ? host : "\(link.label) · \(host)"
+                                    Button(title) { pendingLink = link.url }
+                                        .buttonStyle(.link)
+                                        .help(link.url.absoluteString)
+                                }
+                            }
+                        }
+                    }
+                    if !sponsors.isEmpty {
+                        FactRow(symbol: "star", label: sponsors.count == 1 ? "Sponsor" : "Sponsors") {
+                            Text(sponsors.joined(separator: ", "))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
                         }
                     }
                     if let printed = event.datePrinted {
@@ -745,6 +813,11 @@ struct EventDetail: View {
                 }
             }
         }
+    }
+
+    private var photoCoordinate: CLLocationCoordinate2D? {
+        guard let latitude = flyer?.latitude, let longitude = flyer?.longitude else { return nil }
+        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     private var statusSymbol: String {
@@ -762,54 +835,6 @@ struct EventDetail: View {
         case .queued: return "Waiting for a calendar"
         case .needsReview: return "Waiting for you to check it"
         default: return "Not on your calendar"
-        }
-    }
-}
-
-/// Loads the original from your library, since the app only keeps a smaller copy.
-struct FullPhotoSheet: View {
-    let assetID: String?
-    @Environment(\.dismiss) private var dismiss
-    @State private var image: NSImage?
-    @State private var failure: String?
-
-    var body: some View {
-        Group {
-            if let image {
-                Image(nsImage: image).resizable().scaledToFit()
-            } else if let failure {
-                ContentUnavailableView("No photo", systemImage: "photo", description: Text(failure))
-            } else {
-                ProgressView()
-            }
-        }
-        .frame(width: 760, height: 820)
-        .overlay(alignment: .topTrailing) {
-            Button("Close", systemImage: "xmark") { dismiss() }
-                .labelStyle(.iconOnly)
-                .glassButton()
-                .controlSize(.large)
-                .keyboardShortcut(.cancelAction)
-                .help("Close (Esc)")
-                .padding(14)
-        }
-        .task(load)
-    }
-
-    @Sendable private func load() async {
-        guard let assetID else {
-            failure = "The original photo couldn't be found."
-            return
-        }
-        do {
-            let data = try await PhotoLibrary().imageData(id: assetID)
-            if let loaded = NSImage(data: data) {
-                image = loaded
-            } else {
-                failure = "The photo couldn't be opened."
-            }
-        } catch {
-            failure = "The photo couldn't be loaded. It may no longer be in your library."
         }
     }
 }
@@ -889,7 +914,7 @@ struct EditEventSheet: View {
                 }
             }
             Section {
-                TextField("Link", text: $link)
+                TextField("Main link", text: $link)
                 if let linkError {
                     Text(linkError).font(.caption).foregroundStyle(.red)
                 }
@@ -937,7 +962,7 @@ struct EditEventSheet: View {
             $0.startTime = hasTime ? format(start) : nil
             $0.endTime = hasTime && hasEndTime ? format(end) : nil
             $0.location = location.isEmpty ? nil : location
-            $0.url = url
+            $0.setMainLink(url)
             $0.details = details.isEmpty ? nil : details
         }
         dismiss()

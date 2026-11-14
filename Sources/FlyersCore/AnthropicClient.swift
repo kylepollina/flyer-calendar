@@ -3,24 +3,49 @@ import Foundation
 public struct PhotoContext: Sendable {
     public var takenOn: Day
     public var coordinates: (latitude: Double, longitude: Double)?
-    public var codes: [DetectedCode]
+    /// QR codes found in each photo, in the order the photos are sent.
+    public var codesByPhoto: [[DetectedCode]]
 
-    public init(takenOn: Day, coordinates: (latitude: Double, longitude: Double)?, codes: [DetectedCode]) {
+    public init(takenOn: Day, coordinates: (latitude: Double, longitude: Double)?, codesByPhoto: [[DetectedCode]]) {
         self.takenOn = takenOn
         self.coordinates = coordinates
-        self.codes = codes
+        self.codesByPhoto = codesByPhoto
     }
 
+    /// One photo.
+    public init(takenOn: Day, coordinates: (latitude: Double, longitude: Double)?, codes: [DetectedCode]) {
+        self.init(takenOn: takenOn, coordinates: coordinates, codesByPhoto: [codes])
+    }
+
+    public var photoCount: Int { codesByPhoto.count }
+
     public var promptText: String {
-        var lines = ["Photo taken: \(takenOn.weekdayName), \(takenOn.iso)."]
+        let several = photoCount > 1
+        var lines = ["\(several ? "Photos" : "Photo") taken: \(takenOn.weekdayName), \(takenOn.iso)."]
         if let coordinates {
-            lines.append(String(format: "Photo taken near coordinates: %.3f, %.3f.", coordinates.latitude, coordinates.longitude))
+            lines.append(String(
+                format: "\(several ? "Photos" : "Photo") taken near coordinates: %.3f, %.3f.",
+                coordinates.latitude, coordinates.longitude
+            ))
         }
-        if codes.isEmpty {
-            lines.append("No QR codes were decoded from this photo.")
-        } else {
-            lines.append("QR codes decoded by software, with position as % from the photo's top-left:")
-            lines += codes.map { "- \($0.value) (x \($0.xPercent)%, y \($0.yPercent)%)" }
+        guard several else {
+            let codes = codesByPhoto.first ?? []
+            if codes.isEmpty {
+                lines.append("No QR codes were decoded from this photo.")
+            } else {
+                lines.append("QR codes decoded by software, with position as % from the photo's top-left:")
+                lines += codes.map { "- \($0.value) (x \($0.xPercent)%, y \($0.yPercent)%)" }
+            }
+            return lines.joined(separator: "\n")
+        }
+        lines.append("These \(photoCount) photos were taken within a couple of minutes of each other, in the order shown.")
+        for (index, codes) in codesByPhoto.enumerated() {
+            if codes.isEmpty {
+                lines.append("Photo \(index + 1): no QR codes were decoded.")
+            } else {
+                lines.append("Photo \(index + 1): QR codes decoded by software, with position as % from that photo's top-left:")
+                lines += codes.map { "- \($0.value) (x \($0.xPercent)%, y \($0.yPercent)%)" }
+            }
         }
         return lines.joined(separator: "\n")
     }
@@ -43,7 +68,14 @@ public enum ExtractionError: Error, Equatable, CustomStringConvertible {
 }
 
 public protocol EventExtracting: Sendable {
-    func extract(jpeg: Data, context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage)
+    /// Reads one or more photos in one request. `context.codesByPhoto` lines up with `jpegs`.
+    func extract(jpegs: [Data], context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage)
+}
+
+extension EventExtracting {
+    public func extract(jpeg: Data, context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage) {
+        try await extract(jpegs: [jpeg], context: context, apiKey: apiKey)
+    }
 }
 
 public struct AnthropicClient: EventExtracting {
@@ -56,8 +88,8 @@ public struct AnthropicClient: EventExtracting {
         self.maxAttempts = maxAttempts
     }
 
-    public func extract(jpeg: Data, context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage) {
-        let request = try AnthropicClient.makeRequest(jpeg: jpeg, context: context, apiKey: apiKey)
+    public func extract(jpegs: [Data], context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage) {
+        let request = try AnthropicClient.makeRequest(jpegs: jpegs, context: context, apiKey: apiKey)
         var lastError = ExtractionError.temporary("The request didn't complete")
         for attempt in 1...maxAttempts {
             do {
@@ -94,7 +126,16 @@ public struct AnthropicClient: EventExtracting {
         }
     }
 
-    public static func makeRequest(jpeg: Data, context: PhotoContext, apiKey: String) throws -> URLRequest {
+    public static func makeRequest(jpegs: [Data], context: PhotoContext, apiKey: String) throws -> URLRequest {
+        // Several photos are labeled so the prompt and the model can refer to them by number.
+        var content: [[String: Any]] = []
+        for (index, jpeg) in jpegs.enumerated() {
+            if jpegs.count > 1 { content.append(["type": "text", "text": "Photo \(index + 1):"]) }
+            content.append(["type": "image", "source": [
+                "type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString(),
+            ]])
+        }
+        content.append(["type": "text", "text": context.promptText])
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 180
@@ -103,21 +144,14 @@ public struct AnthropicClient: EventExtracting {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 8000,
+            // Fuller descriptions on a many-event schedule need the room.
+            "max_tokens": 16000,
             "system": ExtractionPrompt.system,
             "output_config": [
                 "effort": "medium",
                 "format": ["type": "json_schema", "schema": ExtractionPrompt.schema],
             ],
-            "messages": [[
-                "role": "user",
-                "content": [
-                    ["type": "image", "source": [
-                        "type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString(),
-                    ]],
-                    ["type": "text", "text": context.promptText],
-                ],
-            ]],
+            "messages": [["role": "user", "content": content]],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
@@ -174,6 +208,19 @@ public enum ExtractionPrompt {
     A photo can show several flyers. Extract only the main flyer the person was photographing, not \
     others partly visible around it. Set flyer_title to a short name for that flyer.
 
+    Several photos:
+    - You may get several photos taken within a couple of minutes of each other, labeled Photo 1, \
+    Photo 2 and so on. Often they're screenshots scrolling through one social media post or listing, \
+    or several shots of the same flyer.
+    - When they show the same post or flyer, read them as one source. Details on one photo, such as a \
+    series name, venue, year or link on the first, apply to the events shown on the others, so fill \
+    them in on every event. Set flyer_title for the whole set.
+    - Photos taken close together can also be unrelated. Only carry details across photos that clearly \
+    belong together, and extract from the post or flyer the person was looking at.
+    - List an event that appears on more than one photo only once.
+    - Set photos_used to the numbers of the photos that show the flyer or post you extracted from, \
+    such as [1, 2]. Leave out photos that aren't part of it. With a single photo, use [1].
+
     Dates:
     - Copy the date and time exactly as printed into date_as_printed.
     - When the flyer gives no year, use the next matching date on or after the day the photo was taken, \
@@ -195,10 +242,21 @@ public enum ExtractionPrompt {
     one one-off event per listed date instead of a rule.
 
     Links:
-    - Set url to a web address printed on the flyer, or to a decoded QR link listed in the message.
+    - Set links to every web address for the event: ones printed on the flyer and decoded QR links \
+    listed in the message. Give each a short label for what it's for, such as "Tickets", "Register", \
+    "Website" or "Instagram". Put the link for tickets or registration first, or else the main website.
     - You can't decode QR codes yourself, so never work out a link from a QR code's pattern.
     - Use a decoded link only if its position is on the main flyer. Every event on that flyer shares its \
-    link, so set it on each one.
+    links, so set them on each one.
+
+    Details:
+    - Set description to everything else the flyer says about the event, in plain sentences: what it \
+    is, who's performing or speaking, what to expect, prices and discounts, how to get tickets or \
+    register, age limits, food and drink, accessibility, and credits such as photography or design. \
+    Include all of it rather than a summary, but don't repeat the date, time, location or links.
+    - Set sponsors to every sponsor, presenter, partner and funder named on the flyer or shown by a \
+    logo you can read, as written. Use an empty list when there are none.
+    - Details that cover the whole flyer, like its sponsors, apply to each of its events.
 
     Locations:
     - Create one event per distinct event on the flyer. Copy location text as printed, and set \
@@ -215,30 +273,39 @@ public enum ExtractionPrompt {
         let string: [String: Any] = ["type": "string"]
         let nullable: [String: Any] = ["type": ["string", "null"]]
         let boolean: [String: Any] = ["type": "boolean"]
+        let link: [String: Any] = [
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "url"],
+            "properties": ["label": string, "url": string],
+        ]
         let event: [String: Any] = [
             "type": "object",
             "additionalProperties": false,
             "required": [
                 "name", "date_as_printed", "start_date", "start_time", "end_date", "end_time", "year_inferred",
-                "rrule", "start_uncertain", "location", "location_inferred", "url", "description",
+                "rrule", "start_uncertain", "location", "location_inferred", "links", "sponsors", "description",
             ],
             "properties": [
                 "name": string, "date_as_printed": nullable, "start_date": nullable, "start_time": nullable,
                 "end_date": nullable, "end_time": nullable, "year_inferred": boolean, "rrule": nullable,
                 "start_uncertain": boolean, "location": nullable, "location_inferred": boolean,
-                "url": nullable, "description": nullable,
+                "links": ["type": "array", "items": link],
+                "sponsors": ["type": "array", "items": string],
+                "description": nullable,
             ],
         ]
         return [
             "type": "object",
             "additionalProperties": false,
-            "required": ["is_event_flyer", "confidence", "reason", "flyer_title", "events"],
+            "required": ["is_event_flyer", "confidence", "reason", "flyer_title", "events", "photos_used"],
             "properties": [
                 "is_event_flyer": boolean,
                 "confidence": ["type": "string", "enum": ["high", "medium", "low"]],
                 "reason": string,
                 "flyer_title": nullable,
                 "events": ["type": "array", "items": event],
+                "photos_used": ["type": "array", "items": ["type": "integer"]],
             ],
         ]
     }

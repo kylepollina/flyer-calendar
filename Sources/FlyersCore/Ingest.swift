@@ -27,6 +27,10 @@ public enum Ingest {
 
             let fingerprint = FlyerEvent.makeFingerprint(name: extracted.name, startDay: startDay)
             guard seen.insert(fingerprint).inserted else { continue }
+            let links = self.links(in: extracted)
+            let sponsors = (extracted.sponsors ?? [])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
 
             var event = FlyerEvent(
                 id: UUID(),
@@ -42,13 +46,15 @@ public enum Ingest {
                 startUncertain: extracted.startUncertain,
                 location: extracted.location,
                 locationInferred: extracted.locationInferred,
-                url: normalizedURL(extracted.url),
+                url: links.first?.url,
                 details: extracted.description,
                 state: .queued,
                 stateBeforeDelete: nil,
                 calendarItemID: nil,
                 fingerprint: fingerprint,
-                problems: []
+                problems: [],
+                links: links.isEmpty ? nil : links,
+                sponsors: sponsors.isEmpty ? nil : sponsors
             )
             event.problems = problems(in: extracted, startDay: startDay)
 
@@ -112,6 +118,19 @@ public enum Ingest {
         guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]),
               (0..<24).contains(hour), (0..<60).contains(minute) else { return nil }
         return String(format: "%02d:%02d", hour, minute)
+    }
+
+    /// Safe, distinct links, main one first. An answer from before multiple links has only `url`.
+    public static func links(in event: ExtractedEvent) -> [EventLink] {
+        var output: [EventLink] = []
+        var raw = event.links ?? []
+        if let url = event.url { raw.insert(EventLink(label: "Link", url: url), at: 0) }
+        for link in raw {
+            guard let url = normalizedURL(link.url), !output.contains(where: { $0.url == url }) else { continue }
+            let label = link.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            output.append(EventLink(label: label.isEmpty ? "Link" : label, url: url))
+        }
+        return output
     }
 
     /// Only http and https links are kept, so a flyer can't plant another URL scheme.

@@ -157,7 +157,15 @@ public final class CalendarService: CalendarSyncing {
         item.url = AppLink.url(for: event.id)
         var notes: [String] = []
         if let details = event.details { notes.append(details) }
-        if let link = event.url { notes.append("Link: \(link)") }
+        if let sponsors = event.sponsors, !sponsors.isEmpty {
+            notes.append("Sponsors: \(sponsors.joined(separator: ", "))")
+        }
+        let links = event.allLinks
+        if links.count == 1 {
+            notes.append("Link: \(links[0].url)")
+        } else if !links.isEmpty {
+            notes.append(links.map { "\($0.label): \($0.url)" }.joined(separator: "\n"))
+        }
         if let printed = event.datePrinted { notes.append("As printed: \(printed)") }
         if event.locationInferred { notes.append("The location is a best guess.") }
         notes.append("Added by Flyers.")

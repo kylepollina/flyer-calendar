@@ -84,7 +84,10 @@ for url in files {
         totals.events += events.count
         for event in events {
             let when = [event.startDay?.iso, event.startTime, event.endDay?.iso, event.endTime].compactMap { $0 }.joined(separator: " ")
-            print("  [\(event.state.rawValue)] \(event.name) | \(when) | rrule=\(event.rrule ?? "-") | \(event.location ?? "no location")\(event.locationInferred ? " (guess)" : "") | url=\(event.url ?? "-")")
+            print("  [\(event.state.rawValue)] \(event.name) | \(when) | rrule=\(event.rrule ?? "-") | \(event.location ?? "no location")\(event.locationInferred ? " (guess)" : "")")
+            for link in event.allLinks { print("      \(link.label): \(link.url)") }
+            if let sponsors = event.sponsors { print("      sponsors: \(sponsors.joined(separator: ", "))") }
+            if let details = event.details { print("      details: \(details)") }
             for problem in event.problems { print("      check: \(problem)") }
         }
     } catch {

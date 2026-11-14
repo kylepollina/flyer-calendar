@@ -226,12 +226,25 @@ private func day(_ iso: String) -> Day { Day(iso: iso)! }
         let context = PhotoContext(takenOn: Day(iso: "2026-04-18")!, coordinates: (41.9, -87.6), codes: [
             DetectedCode(value: "https://a.example", xPercent: 10, yPercent: 20),
         ])
-        let request = try AnthropicClient.makeRequest(jpeg: Data([1, 2, 3]), context: context, apiKey: "k")
+        let request = try AnthropicClient.makeRequest(jpegs: [Data([1, 2, 3])], context: context, apiKey: "k")
         let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
         #expect(body["model"] as? String == "claude-haiku-5-5")
         let config = body["output_config"] as! [String: Any]
         #expect((config["format"] as! [String: Any])["type"] as? String == "json_schema")
         #expect(context.promptText.contains("x 10%, y 20%"))
         #expect(context.promptText.contains("41.900, -87.600"))
+        #expect(contentTypes(body) == ["image", "text"])
+    }
+
+    @Test func severalPhotosAreLabeledAndSentInOrder() throws {
+        let context = PhotoContext(takenOn: Day(iso: "2026-04-18")!, coordinates: nil, codesByPhoto: [[], []])
+        let request = try AnthropicClient.makeRequest(jpegs: [Data([1]), Data([2])], context: context, apiKey: "k")
+        let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+        #expect(contentTypes(body) == ["text", "image", "text", "image", "text"])
+    }
+
+    private func contentTypes(_ body: [String: Any]) -> [String] {
+        let message = (body["messages"] as! [[String: Any]])[0]
+        return (message["content"] as! [[String: Any]]).map { $0["type"] as! String }
     }
 }
