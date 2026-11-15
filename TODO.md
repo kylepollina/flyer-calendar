@@ -91,5 +91,5 @@ skips anything the phone already handled. If you never open the phone app, the M
 
 ## Known gaps
 
-- [ ] Several separate flyers photographed within two minutes are saved as one flyer. Let one answer return several flyers, each with its own photos and events.
+- [x] Several separate flyers photographed within two minutes were saved as one flyer. Only screenshots are read together now, and one answer can return several flyers, each with its own photos and events.
 - [ ] The landing page in `docs/` still describes "Weekly schedules" you pick from, which no longer exists.

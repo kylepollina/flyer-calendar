@@ -6,9 +6,12 @@ public struct PhotoCandidate: Equatable, Sendable {
     public var takenAt: Date
     public var latitude: Double?
     public var longitude: Double?
+    /// Only screenshots are read together with ones taken moments before.
+    public var isScreenshot: Bool
 
-    public init(id: String, takenAt: Date, latitude: Double? = nil, longitude: Double? = nil) {
+    public init(id: String, takenAt: Date, latitude: Double? = nil, longitude: Double? = nil, isScreenshot: Bool = false) {
         self.id = id
+        self.isScreenshot = isScreenshot
         self.takenAt = takenAt
         self.latitude = latitude
         self.longitude = longitude
@@ -48,13 +51,15 @@ public struct PhotoLibrary: PhotoSource {
         let assets = PHAsset.fetchAssets(with: .image, options: options)
         var output: [PhotoCandidate] = []
         assets.enumerateObjects { asset, _, _ in
+            let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
             // Screenshots often hold private things like messages, so they're opt-in.
-            if !includeScreenshots && asset.mediaSubtypes.contains(.photoScreenshot) { return }
+            if !includeScreenshots && isScreenshot { return }
             output.append(PhotoCandidate(
                 id: asset.localIdentifier,
                 takenAt: asset.creationDate ?? Date(),
                 latitude: asset.location?.coordinate.latitude,
-                longitude: asset.location?.coordinate.longitude
+                longitude: asset.location?.coordinate.longitude,
+                isScreenshot: isScreenshot
             ))
         }
         return output

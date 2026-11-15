@@ -58,26 +58,63 @@ public struct EventLink: Codable, Equatable, Hashable, Sendable {
 
 public enum Confidence: String, Codable, Sendable { case high, medium, low }
 
+/// One flyer or post in an answer. Photos read together can show several separate flyers.
+public struct ExtractedFlyer: Codable, Equatable, Sendable {
+    public var flyerTitle: String?
+    /// The numbers, from 1, of the photos that show this flyer. Photos that aren't part of it are
+    /// left out, so they're never saved, shown or removed with it.
+    public var photosUsed: [Int]
+    public var events: [ExtractedEvent]
+
+    public init(flyerTitle: String? = nil, photosUsed: [Int] = [], events: [ExtractedEvent] = []) {
+        self.flyerTitle = flyerTitle
+        self.photosUsed = photosUsed
+        self.events = events
+    }
+}
+
 public struct ExtractionResult: Codable, Equatable, Sendable {
     public var isEventFlyer: Bool
     public var confidence: Confidence
     public var reason: String
-    public var flyerTitle: String?
-    public var events: [ExtractedEvent]
-    /// The numbers, from 1, of the photos that show the flyer or post. Photos taken nearby that
-    /// aren't part of it are left out, so they're never saved or removed with it.
-    public var photosUsed: [Int]?
+    public var flyers: [ExtractedFlyer]
 
+    /// With `flyerTitle`, `events` or `photosUsed`, makes a single flyer, as most photos hold.
     public init(
         isEventFlyer: Bool, confidence: Confidence = .high, reason: String = "",
-        flyerTitle: String? = nil, events: [ExtractedEvent] = [], photosUsed: [Int]? = nil
+        flyerTitle: String? = nil, events: [ExtractedEvent] = [], photosUsed: [Int]? = nil,
+        flyers: [ExtractedFlyer]? = nil
     ) {
-        self.photosUsed = photosUsed
         self.isEventFlyer = isEventFlyer
         self.confidence = confidence
         self.reason = reason
-        self.flyerTitle = flyerTitle
-        self.events = events
+        if let flyers {
+            self.flyers = flyers
+        } else if flyerTitle != nil || !events.isEmpty || photosUsed != nil {
+            self.flyers = [ExtractedFlyer(flyerTitle: flyerTitle, photosUsed: photosUsed ?? [], events: events)]
+        } else {
+            self.flyers = []
+        }
+    }
+
+    /// Every event, from all the flyers.
+    public var events: [ExtractedEvent] { flyers.flatMap(\.events) }
+
+    /// The first flyer's title.
+    public var flyerTitle: String? { flyers.first?.flyerTitle }
+
+    /// The first flyer's photos, for answers that hold one flyer.
+    public var photosUsed: [Int]? {
+        get { flyers.first?.photosUsed }
+        set {
+            if flyers.isEmpty { flyers.append(ExtractedFlyer()) }
+            flyers[0].photosUsed = newValue ?? []
+        }
+    }
+
+    /// One flyer's part of this answer, to turn into stored events.
+    public func only(_ flyer: ExtractedFlyer) -> ExtractionResult {
+        ExtractionResult(isEventFlyer: isEventFlyer, confidence: confidence, reason: reason, flyers: [flyer])
     }
 }
 
@@ -130,6 +167,11 @@ public struct FlyerEvent: Codable, Identifiable, Equatable, Sendable {
     /// What to go back to on Undo.
     public var stateBeforeDelete: EventState?
     public var calendarItemID: String?
+    /// Calendar's cross-device ID, used to find the event again if `calendarItemID` changes.
+    public var calendarExternalID: String?
+    /// When Calendar first couldn't find this event. It's only treated as removed if it stays
+    /// missing, so one failed lookup during a sync can't hide it.
+    public var missingFromCalendarSince: Date?
     /// Stays the same after edits, so an edited or deleted event still blocks its duplicates.
     public var fingerprint: String
     public var problems: [String]

@@ -3,13 +3,16 @@
 //
 //   swift run flyers-check samples            on-device filter and QR only, nothing is sent
 //   swift run flyers-check samples --api      also calls the API, using ANTHROPIC_API_KEY
+//   swift run flyers-check burst --api --together
+//                                             sends every photo in the folder in one request, as the
+//                                             app does with photos taken moments apart
 import Foundation
 import FlyersCore
 import ImageIO
 
 let arguments = CommandLine.arguments.dropFirst()
 guard let folder = arguments.first(where: { !$0.hasPrefix("--") }) else {
-    print("usage: flyers-check <folder> [--api]")
+    print("usage: flyers-check <folder> [--api] [--together]")
     exit(2)
 }
 let useAPI = arguments.contains("--api")
@@ -49,6 +52,55 @@ let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys
     .sorted { $0.path < $1.path }
 
 let client = AnthropicClient()
+
+/// Prints what each flyer in an answer became.
+func report(_ result: ExtractionResult, takenOn: Day) -> Int {
+    print("  flyer=\(result.isEventFlyer) confidence=\(result.confidence.rawValue) reason=\(result.reason)")
+    var count = 0
+    for flyer in result.flyers {
+        print("  FLYER \"\(flyer.flyerTitle ?? "-")\" from photos \(flyer.photosUsed)")
+        let events = Ingest.events(
+            from: result.only(flyer), flyerID: UUID(), takenOn: takenOn, today: takenOn, settings: AppSettings(), existingFingerprints: []
+        )
+        count += events.count
+        for event in events {
+            let when = [event.startDay?.iso, event.startTime, event.endDay?.iso, event.endTime].compactMap { $0 }.joined(separator: " ")
+            print("    [\(event.state.rawValue)] \(event.name) | \(when) | rrule=\(event.rrule ?? "-") | \(event.location ?? "no location")\(event.locationInferred ? " (guess)" : "")")
+            for link in event.allLinks { print("        \(link.label): \(link.url)") }
+            for problem in event.problems { print("        check: \(problem)") }
+        }
+    }
+    return count
+}
+
+if arguments.contains("--together") {
+    guard useAPI, let key else {
+        print("--together needs --api")
+        exit(2)
+    }
+    var jpegs: [Data] = []
+    var codesByPhoto: [[DetectedCode]] = []
+    for (index, url) in files.enumerated() {
+        guard let data = try? Data(contentsOf: url), let image = ImageTools.decode(data), let jpeg = ImageTools.jpeg(image, maxEdge: 1568) else {
+            print("\(url.lastPathComponent): couldn't read")
+            exit(1)
+        }
+        jpegs.append(jpeg)
+        codesByPhoto.append(try ImageTools.detectCodes(image))
+        print("Photo \(index + 1): \(url.lastPathComponent)")
+    }
+    guard let first = files.first else { exit(0) }
+    let (takenOn, coordinates) = metadata(first)
+    let context = PhotoContext(takenOn: takenOn, coordinates: coordinates, codesByPhoto: codesByPhoto)
+    do {
+        let (result, usage) = try await client.extract(jpegs: jpegs, context: context, apiKey: key)
+        let count = report(result, takenOn: takenOn)
+        print("\n\(files.count) photos in one request, \(result.flyers.count) flyers, \(count) events, $\(String(format: "%.4f", usage.cost))")
+    } catch {
+        print("failed: \(error)")
+    }
+    exit(0)
+}
 var totals = (sent: 0, flyers: 0, missedFlyers: 0, wronglyAccepted: 0, events: 0, cost: 0.0)
 
 for url in files {
@@ -77,19 +129,7 @@ for url in files {
         if result.isEventFlyer != expectFlyer {
             if expectFlyer { totals.missedFlyers += 1 } else { totals.wronglyAccepted += 1 }
         }
-        print("  flyer=\(result.isEventFlyer) confidence=\(result.confidence.rawValue) title=\(result.flyerTitle ?? "-") reason=\(result.reason)")
-        let events = Ingest.events(
-            from: result, flyerID: UUID(), takenOn: takenOn, today: takenOn, settings: AppSettings(), existingFingerprints: []
-        )
-        totals.events += events.count
-        for event in events {
-            let when = [event.startDay?.iso, event.startTime, event.endDay?.iso, event.endTime].compactMap { $0 }.joined(separator: " ")
-            print("  [\(event.state.rawValue)] \(event.name) | \(when) | rrule=\(event.rrule ?? "-") | \(event.location ?? "no location")\(event.locationInferred ? " (guess)" : "")")
-            for link in event.allLinks { print("      \(link.label): \(link.url)") }
-            if let sponsors = event.sponsors { print("      sponsors: \(sponsors.joined(separator: ", "))") }
-            if let details = event.details { print("      details: \(details)") }
-            for problem in event.problems { print("      check: \(problem)") }
-        }
+        totals.events += report(result, takenOn: takenOn)
     } catch {
         print("  failed: \(error)")
     }

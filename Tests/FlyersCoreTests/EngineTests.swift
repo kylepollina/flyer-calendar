@@ -40,6 +40,21 @@ private final class FakeCalendar: CalendarSyncing {
     }
 
     func snapshot(itemID: String) -> CalendarSnapshot? { snapshots[itemID] }
+
+    /// Cross-device IDs, which survive a sync that changes an event's item ID.
+    var externalIDs: [String: String] = [:]
+
+    func externalID(itemID: String) -> String? { snapshots[itemID] == nil ? nil : externalIDs[itemID, default: "ext-\(itemID)"] }
+    func itemID(externalID: String) -> String? {
+        snapshots.keys.first { externalIDs[$0, default: "ext-\($0)"] == externalID }
+    }
+
+    /// What a sync that gives an event a new item ID looks like.
+    func changeID(_ old: String, to new: String) {
+        snapshots[new] = snapshots.removeValue(forKey: old)
+        items[new] = items.removeValue(forKey: old)
+        externalIDs[new] = "ext-\(old)"
+    }
 }
 
 private final class FakePhotos: PhotoSource, @unchecked Sendable {
@@ -55,7 +70,13 @@ private final class FakePhotos: PhotoSource, @unchecked Sendable {
     }
 
     func candidates(since: Date, includeScreenshots: Bool) async -> [PhotoCandidate] { list }
-    func imageData(id: String) async throws -> Data { data }
+    /// Photos you deleted from your library.
+    var missing: Set<String> = []
+
+    func imageData(id: String) async throws -> Data {
+        if missing.contains(id) { throw PhotoLibrary.LoadError(description: "The photo is no longer in your library") }
+        return data
+    }
     func delete(ids: [String]) async throws -> Bool {
         guard allowDelete else { return false }
         deleted.append(ids)
@@ -114,7 +135,7 @@ private enum NSAttributedStringMaker {
 
 @MainActor
 private func makeEngine(
-    photos: [String] = ["p1"], secondsApart: TimeInterval = 600, calendar: FakeCalendar = FakeCalendar(),
+    photos: [String] = ["p1"], secondsApart: TimeInterval = 600, screenshots: Bool = false, calendar: FakeCalendar = FakeCalendar(),
     extractor: FakeExtractor, key: String? = "k", photoSource: ((FakePhotos) -> Void)? = nil,
     setup: (inout AppSettings) -> Void = { _ in }
 ) -> (FlyersEngine, DocumentStore) {
@@ -125,7 +146,7 @@ private func makeEngine(
     // Ten minutes apart by default, so each photo is read on its own.
     let start = Date()
     let candidates = photos.enumerated().map { index, id in
-        PhotoCandidate(id: id, takenAt: start.addingTimeInterval(Double(index) * secondsApart))
+        PhotoCandidate(id: id, takenAt: start.addingTimeInterval(Double(index) * secondsApart), isScreenshot: screenshots)
     }
     let fake = FakePhotos(list: candidates, data: textImage())
     photoSource?(fake)
@@ -266,7 +287,7 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
 
     @Test func photosTakenMomentsApartAreReadInOneRequest() async {
         let extractor = FakeExtractor { flyer() }
-        let (engine, _) = makeEngine(photos: ["p1", "p2", "p3"], secondsApart: 30, extractor: extractor)
+        let (engine, _) = makeEngine(photos: ["p1", "p2", "p3"], secondsApart: 30, screenshots: true, extractor: extractor)
         await engine.scan()
         #expect(extractor.photoCounts == [3])
         #expect(engine.document.photos.values.allSatisfy { $0.status == .extracted })
@@ -277,7 +298,7 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
 
     @Test func aFailedGroupRecordsEveryPhoto() async {
         let extractor = FakeExtractor { throw ExtractionError.permanent("refused") }
-        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, extractor: extractor)
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, screenshots: true, extractor: extractor)
         await engine.scan()
         #expect(engine.document.lastScanSummary == "0 new events, 2 couldn't be read")
         await engine.scan()
@@ -288,7 +309,7 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
     @Test func scheduledScansWaitForABurstToFinish() async {
         let extractor = FakeExtractor { flyer() }
         // Taken just now, so another screenshot may still be coming.
-        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, extractor: extractor)
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, screenshots: true, extractor: extractor)
         await engine.scan(manual: false)
         #expect(extractor.calls == 0)
         #expect(engine.document.photos.isEmpty)
@@ -302,7 +323,7 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
                 ExtractedEvent(name: "Chess", startDate: future.iso), ExtractedEvent(name: "Go", startDate: future.iso),
             ])
         }
-        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, extractor: extractor)
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, screenshots: true, extractor: extractor)
         await engine.scan()
         let ids = engine.document.events.map(\.id)
         #expect(engine.flyersOnlyUsedBy([ids[0]]).isEmpty)
@@ -337,11 +358,44 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
             result.photosUsed = [1, 3]
             return result
         }
-        let (engine, _) = makeEngine(photos: ["p1", "p2", "p3"], secondsApart: 30, extractor: extractor, photoSource: { fake = $0 })
+        let (engine, _) = makeEngine(photos: ["p1", "p2", "p3"], secondsApart: 30, screenshots: true, extractor: extractor, photoSource: { fake = $0 })
         await engine.scan()
         #expect(engine.document.flyers.first?.allAssetIDs == ["p1", "p3"])
         #expect(engine.document.flyers.first?.photoFiles?.count == 2)
         #expect(fake.deleted == [["p1", "p3"]])
+    }
+
+    @Test func separateFlyersReadTogetherEachGetTheirOwnPhoto() async throws {
+        var fake: FakePhotos!
+        let extractor = FakeExtractor {
+            ExtractionResult(isEventFlyer: true, flyers: [
+                ExtractedFlyer(flyerTitle: "Blood drive", photosUsed: [1], events: [ExtractedEvent(name: "Blood drive", startDate: future.iso)]),
+                ExtractedFlyer(flyerTitle: "Open mic", photosUsed: [2], events: [ExtractedEvent(name: "Open mic", startDate: future.iso)]),
+            ])
+        }
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, screenshots: true, extractor: extractor, photoSource: { fake = $0 })
+        await engine.scan()
+        #expect(extractor.photoCounts == [2])
+        #expect(engine.document.flyers.map(\.title) == ["Blood drive", "Open mic"])
+        #expect(engine.document.flyers.map(\.allAssetIDs) == [["p1"], ["p2"]])
+        #expect(engine.document.flyers.allSatisfy { $0.photoFiles?.count == 1 && $0.thumbnailFile != nil })
+        let mic = try #require(engine.document.events.first { $0.name == "Open mic" })
+        #expect(engine.flyer(id: mic.flyerID)?.assetID == "p2")
+        #expect(fake.deleted == [["p1", "p2"]])
+        #expect(engine.document.lastScanSummary == "2 new events")
+    }
+
+    @Test func aFlyerWhoseEventsAreAllDuplicatesAddsNoFlyer() async {
+        let extractor = FakeExtractor {
+            ExtractionResult(isEventFlyer: true, flyers: [
+                ExtractedFlyer(flyerTitle: "A", photosUsed: [1], events: [ExtractedEvent(name: "Same", startDate: future.iso)]),
+                ExtractedFlyer(flyerTitle: "B", photosUsed: [2], events: [ExtractedEvent(name: "Same", startDate: future.iso)]),
+            ])
+        }
+        let (engine, _) = makeEngine(photos: ["p1", "p2"], secondsApart: 30, screenshots: true, extractor: extractor)
+        await engine.scan()
+        #expect(engine.document.flyers.map(\.title) == ["A"])
+        #expect(engine.document.events.count == 1)
     }
 
     @Test func decliningInPhotosKeepsTheOriginalThere() async {
@@ -370,9 +424,9 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         }
         await engine.scan()
         engine.deleteSavedPhotos(of: engine.document.flyers.map(\.id))
-        #expect(engine.flyersOnlyInLibrary.count == 1)
+        #expect(engine.flyersStillInLibrary.count == 1)
         #expect(await engine.moveOlderPhotosIntoFlyers() == 1)
-        #expect(engine.flyersOnlyInLibrary.isEmpty)
+        #expect(engine.flyersStillInLibrary.isEmpty)
         #expect(engine.document.flyers.first?.photoFiles?.count == 1)
         #expect(fake.deleted == [["p1"]])
     }
@@ -505,13 +559,121 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(engine.document.events.first?.problems.first?.contains("Couldn't add") == true)
     }
 
-    @Test func deletingInCalendarIsRespected() async {
+    @Test func deletingInCalendarIsRespectedOnceItStaysGone() async {
         let calendar = FakeCalendar()
         let (engine, _) = makeEngine(calendar: calendar, extractor: FakeExtractor { flyer() })
         await engine.scan()
         calendar.snapshots.removeAll()
-        engine.reconcileWithCalendar()
+        let now = Date()
+        engine.reconcileWithCalendar(now: now)
+        // One missed lookup, as can happen while iCloud syncs, isn't enough.
+        #expect(engine.document.events.first?.state == .onCalendar)
+        engine.reconcileWithCalendar(now: now.addingTimeInterval(FlyersEngine.missingGracePeriod + 1))
         #expect(engine.document.events.first?.state == .removedInCalendar)
+    }
+
+    @Test func anEventMissingForAMomentStaysOnTheCalendar() async {
+        let calendar = FakeCalendar()
+        let (engine, _) = makeEngine(calendar: calendar, extractor: FakeExtractor { flyer() })
+        await engine.scan()
+        let saved = calendar.snapshots
+        calendar.snapshots.removeAll()
+        let now = Date()
+        engine.reconcileWithCalendar(now: now)
+        calendar.snapshots = saved
+        engine.reconcileWithCalendar(now: now.addingTimeInterval(60))
+        calendar.snapshots.removeAll()
+        // The clock starts over after the event came back.
+        engine.reconcileWithCalendar(now: now.addingTimeInterval(FlyersEngine.missingGracePeriod + 120))
+        #expect(engine.document.events.first?.state == .onCalendar)
+    }
+
+    @Test func anEventWhoseIDChangedInASyncIsFoundAgain() async {
+        let calendar = FakeCalendar()
+        let (engine, _) = makeEngine(calendar: calendar, extractor: FakeExtractor { flyer() })
+        await engine.scan()
+        let old = engine.document.events[0].calendarItemID!
+        calendar.changeID(old, to: "renumbered")
+        let now = Date()
+        engine.reconcileWithCalendar(now: now)
+        engine.reconcileWithCalendar(now: now.addingTimeInterval(FlyersEngine.missingGracePeriod + 1))
+        #expect(engine.document.events[0].state == .onCalendar)
+        #expect(engine.document.events[0].calendarItemID == "renumbered")
+    }
+
+    @Test func hiddenEventsCanBeRestored() async {
+        let calendar = FakeCalendar()
+        let extractor = FakeExtractor {
+            ExtractionResult(isEventFlyer: true, events: [
+                ExtractedEvent(name: "Chess", startDate: future.iso), ExtractedEvent(name: "Go", startDate: future.iso),
+            ])
+        }
+        let (engine, _) = makeEngine(calendar: calendar, extractor: extractor)
+        await engine.scan()
+        let chess = engine.document.events[0].id
+        let go = engine.document.events[1].id
+        engine.delete([chess])
+        calendar.snapshots[engine.event(id: go)!.calendarItemID!] = nil
+        calendar.items[engine.event(id: go)!.calendarItemID!] = nil
+        let now = Date()
+        engine.reconcileWithCalendar(now: now)
+        engine.reconcileWithCalendar(now: now.addingTimeInterval(FlyersEngine.missingGracePeriod + 1))
+        #expect(engine.hiddenEvents.count == 2)
+
+        engine.restore([chess, go])
+        #expect(engine.hiddenEvents.isEmpty)
+        // A deleted event goes back on the calendar. One removed in Calendar waits for you to add it,
+        // since it may still be there.
+        #expect(engine.event(id: chess)?.state == .onCalendar)
+        #expect(engine.event(id: go)?.state == .available)
+        #expect(calendar.items.count == 1)
+    }
+
+    @Test func deletingPhotosFromPhotosKeepsEveryEvent() async {
+        var fake: FakePhotos!
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() }, photoSource: { fake = $0 }) {
+            $0.removesPhotosFromLibrary = false
+        }
+        await engine.scan()
+        engine.deleteSavedPhotos(of: engine.document.flyers.map(\.id))
+        #expect(await engine.cacheLibraryPhotos() == 1)
+        // Copying never deletes anything from your library.
+        #expect(fake.deleted.isEmpty)
+        #expect(engine.document.flyers[0].photoFiles?.count == 1)
+
+        // You delete the photo in Photos, and the library forgets it.
+        fake.list = []
+        await engine.scan()
+        #expect(engine.visibleEvents.count == 1)
+        #expect(engine.document.flyers[0].photoFiles?.count == 1)
+    }
+
+    @Test func whatsLeftOfAPartlyDeletedGroupIsSaved() async {
+        var fake: FakePhotos!
+        let (engine, _) = makeEngine(photos: ["p1", "p2", "p3"], secondsApart: 30, screenshots: true, extractor: FakeExtractor { flyer() }, photoSource: { fake = $0 }) {
+            $0.removesPhotosFromLibrary = false
+        }
+        await engine.scan()
+        engine.deleteSavedPhotos(of: engine.document.flyers.map(\.id))
+        fake.missing = ["p1", "p3"]
+        #expect(await engine.cacheLibraryPhotos() == 1)
+        #expect(engine.document.flyers[0].allAssetIDs == ["p2"])
+        #expect(engine.document.flyers[0].photoFiles?.count == 1)
+    }
+
+    @Test func onePhotoCanLeavePhotosWhileItsEventsStay() async {
+        var fake: FakePhotos!
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() }, photoSource: { fake = $0 }) {
+            $0.removesPhotosFromLibrary = false
+        }
+        await engine.scan()
+        engine.deleteSavedPhotos(of: engine.document.flyers.map(\.id))
+        await engine.removeFromLibrary(flyerID: engine.document.flyers[0].id)
+        #expect(fake.deleted == [["p1"]])
+        #expect(engine.document.flyers[0].photoFiles?.count == 1)
+        #expect(engine.document.flyers[0].mayBeInLibrary == false)
+        #expect(engine.visibleEvents.count == 1)
+        #expect(engine.document.events[0].state == .onCalendar)
     }
 
     @Test func editsInCalendarWin() async {
@@ -576,8 +738,22 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
 @Suite struct PhotoGroupingTests {
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
-    private func photos(_ offsets: [TimeInterval]) -> [PhotoCandidate] {
-        offsets.enumerated().map { PhotoCandidate(id: "p\($0.offset)", takenAt: start.addingTimeInterval($0.element)) }
+    private func photos(_ offsets: [TimeInterval], screenshots: Bool = true) -> [PhotoCandidate] {
+        offsets.enumerated().map {
+            PhotoCandidate(id: "p\($0.offset)", takenAt: start.addingTimeInterval($0.element), isScreenshot: screenshots)
+        }
+    }
+
+    @Test func cameraPhotosTakenTogetherAreReadAlone() {
+        // Two posters on the same wall, photographed seconds apart.
+        #expect(PhotoGrouping.groups(photos([0, 10], screenshots: false)).map(\.count) == [1, 1])
+        #expect(!PhotoGrouping.mayStillGrow(photos([0], screenshots: false), now: start.addingTimeInterval(5)))
+    }
+
+    @Test func aCameraPhotoBreaksARunOfScreenshots() {
+        var run = photos([0, 10, 20])
+        run[1].isScreenshot = false
+        #expect(PhotoGrouping.groups(run).map(\.count) == [1, 1, 1])
     }
 
     @Test func aChainOfCloseShotsIsOneGroupEvenPastTwoMinutesInAll() {
@@ -610,7 +786,7 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
     @Test func severalPhotosAreLabeledInThePrompt() {
         let code = DetectedCode(value: "https://example.com", xPercent: 50, yPercent: 80)
         let context = PhotoContext(takenOn: Day(iso: "2026-11-12")!, coordinates: nil, codesByPhoto: [[], [code]])
-        #expect(context.promptText.contains("These 2 photos"))
+        #expect(context.promptText.contains("These 2 screenshots"))
         #expect(context.promptText.contains("Photo 1: no QR codes"))
         #expect(context.promptText.contains("Photo 2: QR codes"))
     }
@@ -678,6 +854,21 @@ private func blankImage(_ gray: CGFloat) -> Data {
             DroppedPhoto(data: blankImage(0.4), takenAt: nil),
         ])
         #expect(extractor.photoCounts == [2, 1, 1])
+    }
+
+    @Test func droppedCameraPhotosAreReadAlone() async throws {
+        let extractor = FakeExtractor { ExtractionResult(isEventFlyer: false) }
+        let (engine, _) = engine(extractor)
+        let start = Date()
+        func jpeg(_ gray: CGFloat) throws -> Data {
+            let image = try #require(ImageTools.decode(blankImage(gray)))
+            return try #require(ImageTools.jpeg(image, maxEdge: 200))
+        }
+        await engine.scanDropped([
+            DroppedPhoto(data: try jpeg(0.1), takenAt: start),
+            DroppedPhoto(data: try jpeg(0.2), takenAt: start.addingTimeInterval(10)),
+        ])
+        #expect(extractor.photoCounts == [1, 1])
     }
 
     @Test func aDropWaitsForARunningScan() async {

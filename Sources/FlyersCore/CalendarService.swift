@@ -41,6 +41,15 @@ public protocol CalendarSyncing: AnyObject {
     func addAppLink(_ event: FlyerEvent, itemID: String) throws
     func remove(itemID: String) throws
     func snapshot(itemID: String) -> CalendarSnapshot?
+    /// The ID that stays the same across devices and syncs, unlike `itemID`, which a sync can change.
+    func externalID(itemID: String) -> String?
+    /// Finds an event again by its `externalID`, after its `itemID` stopped working.
+    func itemID(externalID: String) -> String?
+}
+
+extension CalendarSyncing {
+    public func externalID(itemID: String) -> String? { nil }
+    public func itemID(externalID: String) -> String? { nil }
 }
 
 public struct CalendarChoice: Identifiable, Hashable, Sendable {
@@ -140,6 +149,14 @@ public final class CalendarService: CalendarSyncing {
     public func remove(itemID: String) throws {
         guard let item = store.calendarItem(withIdentifier: itemID) as? EKEvent else { return }
         try store.remove(item, span: .futureEvents, commit: true)
+    }
+
+    public func externalID(itemID: String) -> String? {
+        store.calendarItem(withIdentifier: itemID)?.calendarItemExternalIdentifier
+    }
+
+    public func itemID(externalID: String) -> String? {
+        store.calendarItems(withExternalIdentifier: externalID).first?.calendarItemIdentifier
     }
 
     public func snapshot(itemID: String) -> CalendarSnapshot? {

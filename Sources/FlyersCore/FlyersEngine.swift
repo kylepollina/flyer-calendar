@@ -55,8 +55,8 @@ public final class FlyersEngine: ObservableObject {
 
     // MARK: Scanning
 
-    /// Looks for new photos and processes them, with photos taken within a couple of minutes of
-    /// each other read together. Progress is saved after every request, so a crash or quit never
+    /// Looks for new photos and processes them, with screenshots taken within a couple of minutes
+    /// of each other read together. Progress is saved after every request, so a crash or quit never
     /// pays for the same photo twice.
     ///
     /// Scans you start yourself clear a pause. Automatic ones respect it.
@@ -115,6 +115,12 @@ public final class FlyersEngine: ObservableObject {
             }
         }
 
+        // Older flyers get a saved copy too, so deleting one from Photos by hand never loses it.
+        if !flyersOnlyInLibrary.isEmpty {
+            scanProgress = "Saving flyer photos"
+            await cacheLibraryPhotos()
+        }
+
         // Once at the end, so Photos asks you to confirm once per scan rather than once per flyer.
         if document.settings.removesPhotosFromLibrary && !savedInFlyers.isEmpty {
             scanProgress = "Moving flyer photos out of Photos"
@@ -134,7 +140,7 @@ public final class FlyersEngine: ObservableObject {
     public func clearDropSummary() { dropSummary = nil }
 
     /// Scans images you drop on the window. They skip the on-device text check, since you chose
-    /// them, and photos taken within a couple of minutes of each other are read together.
+    /// them, and screenshots taken within a couple of minutes of each other are read together.
     /// Returns the new events, so the window can show them.
     @discardableResult
     public func scanDropped(_ dropped: [DroppedPhoto]) async -> [UUID] {
@@ -168,7 +174,10 @@ public final class FlyersEngine: ObservableObject {
                 continue
             }
             originals[id] = photo.data
-            let candidate = PhotoCandidate(id: id, takenAt: photo.takenAt ?? Date(), latitude: photo.latitude, longitude: photo.longitude)
+            let candidate = PhotoCandidate(
+                id: id, takenAt: photo.takenAt ?? Date(), latitude: photo.latitude, longitude: photo.longitude,
+                isScreenshot: photo.isScreenshot
+            )
             if photo.takenAt == nil { undated.append(candidate) } else { dated.append(candidate) }
         }
         // Without a date there's no telling which photos go together, so each is read alone.
@@ -308,28 +317,42 @@ public final class FlyersEngine: ObservableObject {
             for id in ids { record(id, status: .notAFlyer) }
             return (0, failed, [])
         }
-        // Only the photos that show the flyer belong to it. Others taken nearby are left alone.
-        let numbers = Set((result.photosUsed ?? []).filter { (1...sending.count).contains($0) })
-        let used = numbers.isEmpty ? sending : sending.enumerated().filter { numbers.contains($0.offset + 1) }.map(\.element)
-        let main = used[0]
-        let flyerID = UUID()
-        var thumbnailName: String?
-        if let thumbnail = main.thumbnail {
-            let name = "\(flyerID.uuidString).jpg"
-            try? store.saveThumbnail(thumbnail, name: name)
-            thumbnailName = name
-        }
-        let new = Ingest.events(
-            from: result, flyerID: flyerID, takenOn: takenOn, today: .today, settings: document.settings,
-            existingFingerprints: Set(document.events.map(\.fingerprint))
-        )
+        // Photos read together can show separate flyers. Each becomes its own flyer, with only
+        // the photos that show it, so every event has the right picture.
+        var added = 0
         var saved: [String] = []
-        if !new.isEmpty {
+        // Photos some flyer couldn't save a copy of, which must stay in your library.
+        var unsaved: Set<String> = []
+        var fingerprints = Set(document.events.map(\.fingerprint))
+        for extracted in result.flyers {
+            let numbers = Set(extracted.photosUsed.filter { (1...sending.count).contains($0) })
+            // Without photo numbers, a lone flyer had them all. With several, the first is the best guess.
+            let used = numbers.isEmpty
+                ? (result.flyers.count == 1 ? sending : [sending[0]])
+                : sending.enumerated().filter { numbers.contains($0.offset + 1) }.map(\.element)
+            let main = used[0]
+            let flyerID = UUID()
+            let new = Ingest.events(
+                from: result.only(extracted), flyerID: flyerID, takenOn: takenOn, today: .today,
+                settings: document.settings, existingFingerprints: fingerprints
+            )
+            guard !new.isEmpty else { continue }
+            fingerprints.formUnion(new.map(\.fingerprint))
+            var thumbnailName: String?
+            if let thumbnail = main.thumbnail {
+                let name = "\(flyerID.uuidString).jpg"
+                try? store.saveThumbnail(thumbnail, name: name)
+                thumbnailName = name
+            }
             let usedIDs = used.map(\.candidate.id)
             let files = savePhotos(used.map(\.original), flyerID: flyerID)
-            if files != nil && !isDrop { saved = usedIDs }
+            if files == nil {
+                unsaved.formUnion(usedIDs)
+            } else if !isDrop {
+                saved += usedIDs.filter { !saved.contains($0) }
+            }
             document.flyers.append(Flyer(
-                id: flyerID, assetID: main.candidate.id, takenAt: main.candidate.takenAt, title: result.flyerTitle,
+                id: flyerID, assetID: main.candidate.id, takenAt: main.candidate.takenAt, title: extracted.flyerTitle,
                 reason: result.reason, confidence: result.confidence, thumbnailFile: thumbnailName,
                 assetIDs: usedIDs.count > 1 ? usedIDs : nil,
                 latitude: coordinates?.latitude, longitude: coordinates?.longitude,
@@ -337,10 +360,13 @@ public final class FlyersEngine: ObservableObject {
                 photosInLibrary: isDrop ? false : nil
             ))
             document.events.append(contentsOf: new)
+            added += new.count
         }
+        // A photo only leaves your library once every flyer that shows it has its own copy.
+        saved.removeAll(where: unsaved.contains)
         for id in ids { record(id, status: .extracted) }
         flushQueue()
-        return (new.count, failed, saved)
+        return (added, failed, saved)
     }
 
     // MARK: Saved photos
@@ -381,6 +407,59 @@ public final class FlyersEngine: ObservableObject {
         document.flyers.filter { $0.photoFiles == nil && $0.mayBeInLibrary && $0.assetID != "demo" }
     }
 
+    /// Flyers whose originals may still be in your Photos library.
+    public var flyersStillInLibrary: [Flyer] {
+        document.flyers.filter { $0.mayBeInLibrary && $0.assetID != "demo" && !$0.assetID.hasPrefix("dropped:") }
+    }
+
+    /// Copies photos only in your library into Flyers, without touching the library, so deleting
+    /// them from Photos later never loses them. Returns how many flyers it saved photos for.
+    @discardableResult
+    public func cacheLibraryPhotos() async -> Int {
+        var count = 0
+        for flyer in flyersOnlyInLibrary where await copyIntoFlyers(flyer) {
+            count += 1
+        }
+        persist()
+        return count
+    }
+
+    /// Saves a flyer's photos here if they aren't already. False if they couldn't be read.
+    private func copyIntoFlyers(_ flyer: Flyer) async -> Bool {
+        guard flyer.photoFiles == nil else { return true }
+        var found: [(id: String, data: Data)] = []
+        for id in flyer.allAssetIDs {
+            if let data = try? await photos.imageData(id: id) { found.append((id, data)) }
+        }
+        guard let index = document.flyers.firstIndex(where: { $0.id == flyer.id }) else { return false }
+        guard !found.isEmpty else {
+            // Already gone from your library, so there's nothing left to copy.
+            document.flyers[index].photosInLibrary = false
+            return false
+        }
+        guard let files = savePhotos(found.map(\.data), flyerID: flyer.id) else { return false }
+        // Photos already deleted from your library are dropped, keeping what's left.
+        if found.count < flyer.allAssetIDs.count {
+            let ids = found.map(\.id)
+            document.flyers[index].assetID = ids[0]
+            document.flyers[index].assetIDs = ids.count > 1 ? ids : nil
+        }
+        document.flyers[index].photoFiles = files
+        return true
+    }
+
+    /// Removes one flyer's photos from your Photos library, keeping a copy here and all its events.
+    public func removeFromLibrary(flyerID: UUID) async {
+        guard let flyer = flyer(id: flyerID), flyer.mayBeInLibrary else { return }
+        guard await copyIntoFlyers(flyer) else {
+            persist()
+            alertMessage = "Couldn't save a copy of the photo, so it was left in Photos."
+            return
+        }
+        persist()
+        await removeFromLibrary(flyer.allAssetIDs)
+    }
+
     public var savedPhotoNames: [String] { document.flyers.flatMap { $0.photoFiles ?? [] } }
 
     /// Copies older flyers' photos into Flyers, then removes them from your library.
@@ -389,20 +468,7 @@ public final class FlyersEngine: ObservableObject {
     public func moveOlderPhotosIntoFlyers() async -> Int {
         var moved: [String] = []
         var count = 0
-        for flyer in flyersOnlyInLibrary {
-            var originals: [Data] = []
-            for id in flyer.allAssetIDs {
-                guard let data = try? await photos.imageData(id: id) else { break }
-                originals.append(data)
-            }
-            guard let index = document.flyers.firstIndex(where: { $0.id == flyer.id }) else { continue }
-            guard originals.count == flyer.allAssetIDs.count else {
-                // Already gone from your library, so there's nothing left to copy.
-                if originals.isEmpty { document.flyers[index].photosInLibrary = false }
-                continue
-            }
-            guard let files = savePhotos(originals, flyerID: flyer.id) else { continue }
-            document.flyers[index].photoFiles = files
+        for flyer in flyersStillInLibrary where await copyIntoFlyers(flyer) {
             moved += flyer.allAssetIDs
             count += 1
         }
@@ -464,9 +530,12 @@ public final class FlyersEngine: ObservableObject {
         guard calendar.isReady else { return }
         for index in document.events.indices where document.events[index].state == .queued {
             do {
-                document.events[index].calendarItemID = try calendar.add(
+                let itemID = try calendar.add(
                     document.events[index], alertMinutesBefore: document.settings.alertMinutesBefore
                 )
+                document.events[index].calendarItemID = itemID
+                document.events[index].calendarExternalID = calendar.externalID(itemID: itemID)
+                document.events[index].missingFromCalendarSince = nil
                 document.events[index].state = .onCalendar
             } catch {
                 document.events[index].state = .needsReview
@@ -542,6 +611,33 @@ public final class FlyersEngine: ObservableObject {
 
     public func dismissUndo() { lastDeletedIDs = [] }
 
+    /// Events you deleted here or that left Calendar, newest first, so they can be brought back.
+    public var hiddenEvents: [FlyerEvent] {
+        document.events.filter(\.isHidden).sorted { ($0.startDay?.number ?? 0) > ($1.startDay?.number ?? 0) }
+    }
+
+    /// Brings hidden events back. One deleted here goes back where it was. One that left Calendar
+    /// stays off it, since it may still be there under a new ID; Add to Calendar puts it back.
+    public func restore(_ ids: [UUID]) {
+        for id in ids {
+            change(id) {
+                switch $0.state {
+                case .deleted:
+                    let previous = $0.stateBeforeDelete ?? .available
+                    $0.state = previous == .onCalendar ? .queued : previous
+                case .removedInCalendar:
+                    $0.state = .available
+                default:
+                    return
+                }
+                $0.stateBeforeDelete = nil
+                $0.missingFromCalendarSince = nil
+            }
+        }
+        flushQueue()
+        persist()
+    }
+
     /// Applies your edits here and in Calendar. Your edit counts as checking the event.
     public func edit(_ id: UUID, _ apply: (inout FlyerEvent) -> Void) {
         change(id) {
@@ -561,17 +657,47 @@ public final class FlyersEngine: ObservableObject {
     }
 
     /// Picks up changes you made in Calendar. Your changes there win.
-    public func reconcileWithCalendar() {
+    /// How long an event has to stay missing from Calendar before Flyers treats it as removed.
+    /// Calendar can briefly lose track of events while iCloud syncs.
+    public static let missingGracePeriod: TimeInterval = 3600
+
+    public func reconcileWithCalendar(now: Date = Date()) {
         guard calendar.isReady else { return }
         var changed = false
         for index in document.events.indices {
-            let event = document.events[index]
-            guard event.state == .onCalendar, let itemID = event.calendarItemID else { continue }
-            guard let snapshot = calendar.snapshot(itemID: itemID) else {
-                document.events[index].state = .removedInCalendar
-                document.events[index].calendarItemID = nil
+            var event = document.events[index]
+            guard event.state == .onCalendar, var itemID = event.calendarItemID else { continue }
+            var snapshot = calendar.snapshot(itemID: itemID)
+            // A sync can give the event a new ID. Its cross-device ID still finds it.
+            if snapshot == nil, let externalID = event.calendarExternalID, let found = calendar.itemID(externalID: externalID) {
+                itemID = found
+                snapshot = calendar.snapshot(itemID: found)
+                document.events[index].calendarItemID = found
                 changed = true
+            }
+            guard let snapshot else {
+                if let since = event.missingFromCalendarSince {
+                    if now.timeIntervalSince(since) >= FlyersEngine.missingGracePeriod {
+                        document.events[index].state = .removedInCalendar
+                        document.events[index].calendarItemID = nil
+                        document.events[index].missingFromCalendarSince = nil
+                        changed = true
+                    }
+                } else {
+                    document.events[index].missingFromCalendarSince = now
+                    changed = true
+                }
                 continue
+            }
+            if event.missingFromCalendarSince != nil {
+                document.events[index].missingFromCalendarSince = nil
+                changed = true
+            }
+            // Events added before cross-device IDs were saved get theirs now.
+            if event.calendarExternalID == nil, let externalID = calendar.externalID(itemID: itemID) {
+                document.events[index].calendarExternalID = externalID
+                event.calendarExternalID = externalID
+                changed = true
             }
             if snapshot.title != event.name {
                 document.events[index].name = snapshot.title

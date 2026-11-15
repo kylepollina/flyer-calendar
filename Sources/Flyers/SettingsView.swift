@@ -176,7 +176,7 @@ struct SettingsView: View {
 
     private var photosSection: some View {
         let saved = engine.savedPhotoNames
-        let older = engine.flyersOnlyInLibrary
+        let older = engine.flyersStillInLibrary
         let past = engine.flyersWithOnlyPastEvents()
         return Section {
             Toggle("Move flyer photos out of Photos", isOn: binding(\.removesPhotosFromLibrary))
@@ -186,8 +186,8 @@ struct SettingsView: View {
                     : "\(saved.count) \(saved.count == 1 ? "photo" : "photos"), \(ByteCountFormatter.string(fromByteCount: engine.store.photosSize(saved), countStyle: .file))")
             }
             if !older.isEmpty {
-                LabeledContent("\(older.count) older \(older.count == 1 ? "flyer is" : "flyers are") only in Photos") {
-                    Button(isMovingPhotos ? "Moving…" : "Move to Flyers") {
+                LabeledContent("\(older.count) \(older.count == 1 ? "flyer's photo is" : "flyers' photos are") still in Photos") {
+                    Button(isMovingPhotos ? "Removing…" : "Remove from Photos") {
                         isMovingPhotos = true
                         Task {
                             await engine.moveOlderPhotosIntoFlyers()
@@ -213,7 +213,7 @@ struct SettingsView: View {
         } header: {
             Text("Photos")
         } footer: {
-            Text("Flyers keeps a copy of each flyer it finds, then moves the original from Photos to Recently Deleted. Photos asks you to confirm each time.")
+            Text("Flyers keeps its own copy of every flyer photo, so deleting one from Photos never touches its events. With this on, new flyers' originals move to Recently Deleted in Photos after each scan, and Photos asks you to confirm.")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

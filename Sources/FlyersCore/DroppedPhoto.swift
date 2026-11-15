@@ -9,6 +9,10 @@ public struct DroppedPhoto: Sendable {
     public var latitude: Double?
     public var longitude: Double?
 
+    /// Screenshots from a Mac or iPhone are PNGs, while cameras save JPEG or HEIC. A file has
+    /// nothing better to go on, and only screenshots are read together.
+    public var isScreenshot: Bool { data.starts(with: [0x89, 0x50, 0x4E, 0x47]) }
+
     /// Reads when and where the photo was taken from its metadata. `fileDate`, such as a
     /// screenshot file's creation date, is the fallback when the photo doesn't say.
     public init(data: Data, fileDate: Date? = nil) {

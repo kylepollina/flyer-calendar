@@ -200,7 +200,7 @@ private func day(_ iso: String) -> Day { Day(iso: iso)! }
         return try! JSONSerialization.data(withJSONObject: body)
     }
 
-    private let answer = #"{"is_event_flyer":true,"confidence":"high","reason":"r","flyer_title":"T","events":[{"name":"Chess","date_as_printed":null,"start_date":"2026-04-26","start_time":null,"end_date":null,"end_time":null,"year_inferred":false,"rrule":null,"start_uncertain":false,"location":null,"location_inferred":false,"url":null,"description":null}]}"#
+    private let answer = #"{"is_event_flyer":true,"confidence":"high","reason":"r","flyers":[{"flyer_title":"T","photos_used":[1],"events":[{"name":"Chess","date_as_printed":null,"start_date":"2026-04-26","start_time":null,"end_date":null,"end_time":null,"year_inferred":false,"rrule":null,"start_uncertain":false,"location":null,"location_inferred":false,"url":null,"description":null}]}]}"#
 
     @Test func readsTheAnswerPastThinkingBlocks() throws {
         let (result, usage) = try AnthropicClient.parse(data: reply(text: answer), status: 200)

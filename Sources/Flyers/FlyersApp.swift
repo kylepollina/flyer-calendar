@@ -168,6 +168,8 @@ final class AppModel: ObservableObject {
         engine.reconcileWithCalendar()
         engine.addAppLinksIfNeeded()
         engine.addHeldScheduleEventsIfNeeded()
+        // Saves a copy of every flyer photo still only in Photos, so deleting one there loses nothing.
+        if hasPhotoAccess { Task { await engine.cacheLibraryPhotos() } }
         scheduleScans()
         scanIfReady()
     }

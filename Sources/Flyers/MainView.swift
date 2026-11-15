@@ -344,11 +344,19 @@ struct MainView: View {
             }
         case .past:
             let events = EventList.past(engine.document.events, today: today)
-            if events.isEmpty {
+            let hidden = engine.hiddenEvents
+            if events.isEmpty && hidden.isEmpty {
                 EmptyList(symbol: "clock", title: "No past events", message: "Events move here once they've finished.")
             } else {
                 List(selection: $selection) {
                     ForEach(events) { eventRow($0, day: $0.startDay) }
+                    if !hidden.isEmpty {
+                        // Deleted events stay in the library, so a rescan can't bring them back.
+                        // Here you can bring one back yourself.
+                        Section("Deleted") {
+                            ForEach(hidden) { hiddenRow($0) }
+                        }
+                    }
                 }
                 .listStyle(.sidebar)
                 .onDeleteCommand(perform: deleteSelection)
@@ -364,6 +372,29 @@ struct MainView: View {
             return EventList.needingReview(engine.document.events).first?.id
         case .past:
             return EventList.past(engine.document.events, today: today).first?.id
+        }
+    }
+
+    private func hiddenRow(_ event: FlyerEvent) -> some View {
+        HStack(spacing: 8) {
+            RowLabel(
+                title: event.name,
+                subtitle: EventFormat.summary(event, day: event.startDay),
+                detail: event.state == .removedInCalendar ? "Removed in Calendar" : "Deleted in Flyers",
+                thumbnail: thumbnail(engine.flyer(id: event.flyerID)),
+                repeats: event.rrule != nil,
+                status: nil
+            )
+            .opacity(0.6)
+            Button("Restore") { engine.restore([event.id]) }
+                .help(event.state == .removedInCalendar
+                    ? "Bring it back to Flyers. Use Add to Calendar if it's no longer on your calendar."
+                    : "Bring it back, and onto your calendar if it was there")
+        }
+        // Not selectable, since there's no page for a deleted event.
+        .selectionDisabled()
+        .contextMenu {
+            Button("Restore") { engine.restore([event.id]) }
         }
     }
 
@@ -757,6 +788,13 @@ struct EventDetail: View {
                 }
                 .glassButton()
                 .help("View the full photo")
+                if let flyer, flyer.mayBeInLibrary, flyer.assetID != "demo" {
+                    Button { Task { await engine.removeFromLibrary(flyerID: flyer.id) } } label: {
+                        Label("Remove Photo from Photos", systemImage: "photo.badge.arrow.down").labelStyle(.iconOnly)
+                    }
+                    .glassButton()
+                    .help("Remove the photo from your Photos library. Flyers keeps a copy, and every event stays.")
+                }
                 Spacer(minLength: 0)
                 Button(role: .destructive) { onDelete([event.id]) } label: {
                     Label("Delete", systemImage: "trash").labelStyle(.iconOnly)
@@ -967,7 +1005,7 @@ struct DropTargetOverlay: View {
             VStack(spacing: 10) {
                 Image(systemName: "photo.badge.plus").font(.system(size: 44))
                 Text("Drop photos to scan").font(.title2.weight(.semibold))
-                Text("Photos taken within a couple of minutes of each other are read together.")
+                Text("Screenshots taken within a couple of minutes of each other are read together.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
