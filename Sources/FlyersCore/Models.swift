@@ -172,6 +172,10 @@ public struct FlyerEvent: Codable, Identifiable, Equatable, Sendable {
     /// When Calendar first couldn't find this event. It's only treated as removed if it stays
     /// missing, so one failed lookup during a sync can't hide it.
     public var missingFromCalendarSince: Date?
+    /// The device that found this event, or last put it on the calendar. Only that device adds it
+    /// to Calendar and watches Calendar for changes to it, so syncing devices never double up.
+    /// Nil, as for events from before sync, means whichever device has it.
+    public var ownerDevice: String?
     /// Stays the same after edits, so an edited or deleted event still blocks its duplicates.
     public var fingerprint: String
     public var problems: [String]
@@ -303,6 +307,8 @@ public enum PhotoStatus: String, Codable, Sendable {
     case notAFlyer
     case extracted
     case failed
+    /// A device is reading it right now, so others leave it alone for a while.
+    case claimed
 }
 
 public struct PhotoRecord: Codable, Equatable, Sendable {
@@ -310,6 +316,22 @@ public struct PhotoRecord: Codable, Equatable, Sendable {
     public var attempts: Int
     public var lastError: String?
     public var processedAt: Date
+    /// iCloud Photos' ID for the photo, the same on every device, unlike the key it's stored under.
+    public var cloudID: String?
+    /// For a claim, the device reading it.
+    public var claimedBy: String?
+
+    public init(
+        status: PhotoStatus, attempts: Int, lastError: String? = nil, processedAt: Date,
+        cloudID: String? = nil, claimedBy: String? = nil
+    ) {
+        self.status = status
+        self.attempts = attempts
+        self.lastError = lastError
+        self.processedAt = processedAt
+        self.cloudID = cloudID
+        self.claimedBy = claimedBy
+    }
 }
 
 public enum AddMode: String, Codable, CaseIterable, Sendable { case automatic, review }

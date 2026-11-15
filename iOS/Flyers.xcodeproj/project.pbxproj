@@ -194,6 +194,8 @@
 				DEVELOPMENT_TEAM = K9NSF24HZ7;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Flyers;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Flyers adds the events it finds to your calendar and notices when you change them.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Flyers looks through your new photos for event flyers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -222,6 +224,8 @@
 				DEVELOPMENT_TEAM = K9NSF24HZ7;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Flyers;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Flyers adds the events it finds to your calendar and notices when you change them.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Flyers looks through your new photos for event flyers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

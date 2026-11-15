@@ -6,7 +6,8 @@ import Foundation
 /// so these rules run in tests with no permissions.
 @MainActor
 public final class FlyersEngine: ObservableObject {
-    @Published public private(set) var document: AppDocument
+    /// Changed only through the engine, including the sync code in Sync.swift.
+    @Published public internal(set) var document: AppDocument
     @Published public private(set) var isScanning = false
     @Published public private(set) var scanProgress: String?
     @Published public private(set) var isStopping = false
@@ -19,6 +20,10 @@ public final class FlyersEngine: ObservableObject {
 
     public let store: DocumentStore
     public let calendar: CalendarSyncing
+    /// This copy of the app, so syncing devices know which one found each event.
+    public let deviceID: String
+    /// Connects to iCloud when sync is on. Nil keeps everything on this device.
+    public weak var sync: SyncConnection?
     private let photos: PhotoSource
     private let extractor: EventExtracting
     private let apiKey: () -> String?
@@ -26,9 +31,11 @@ public final class FlyersEngine: ObservableObject {
 
     public init(
         store: DocumentStore, photos: PhotoSource, extractor: EventExtracting,
-        calendar: CalendarSyncing, apiKey: @escaping () -> String?, document: AppDocument? = nil
+        calendar: CalendarSyncing, apiKey: @escaping () -> String?, document: AppDocument? = nil,
+        deviceID: String? = nil
     ) {
         self.store = store
+        self.deviceID = deviceID ?? store.deviceID()
         self.photos = photos
         self.extractor = extractor
         self.calendar = calendar
@@ -75,14 +82,14 @@ public final class FlyersEngine: ObservableObject {
             isStopping = false
             scanProgress = nil
         }
+        // What other devices have read and claimed since last time.
+        if let sync { await sync.fetchNow() }
         flushQueue()
 
         let settings = document.settings
         let found = await photos.candidates(since: settings.scanStartDate, includeScreenshots: settings.includeScreenshots)
-        let pending = found.filter { candidate in
-            guard let record = document.photos[candidate.id] else { return true }
-            return record.status == .failed && record.attempts < maxAttempts
-        }
+        cloudIDs = photos.cloudIDs(forLocal: found.map(\.id))
+        let pending = found.filter { isPending($0.id) }
 
         var added = 0
         var failed = 0
@@ -101,8 +108,19 @@ public final class FlyersEngine: ObservableObject {
             scanProgress = group.count == 1
                 ? "Checking photo \(first) of \(pending.count)"
                 : "Checking photos \(first)–\(checked) of \(pending.count)"
+            // Tells other devices these are taken before paying to read them.
+            if let sync {
+                for candidate in group {
+                    record(candidate.id, status: .claimed, attempts: document.photos[candidate.id]?.attempts ?? 0, claimedBy: deviceID)
+                }
+                await sync.pushNow()
+                // Another device may have claimed or finished some of them in the meantime.
+                await sync.fetchNow()
+            }
+            let mine = group.filter { isPending($0.id) }
+            if mine.isEmpty { continue }
             do {
-                let outcome = try await process(group, apiKey: key)
+                let outcome = try await process(mine, apiKey: key)
                 added += outcome.added
                 failed += outcome.failed
                 savedInFlyers += outcome.saved
@@ -110,8 +128,8 @@ public final class FlyersEngine: ObservableObject {
                 stopReason = stop.reason
                 break
             } catch {
-                failed += group.count
-                for candidate in group { record(candidate.id, status: .failed, error: String(describing: error)) }
+                failed += mine.count
+                for candidate in mine { record(candidate.id, status: .failed, error: String(describing: error)) }
             }
         }
 
@@ -124,7 +142,14 @@ public final class FlyersEngine: ObservableObject {
         // Once at the end, so Photos asks you to confirm once per scan rather than once per flyer.
         if document.settings.removesPhotosFromLibrary && !savedInFlyers.isEmpty {
             scanProgress = "Moving flyer photos out of Photos"
-            await removeFromLibrary(savedInFlyers)
+            // Deleting from iCloud Photos deletes everywhere, so with sync on, the copy in iCloud
+            // has to be uploaded first.
+            if let sync {
+                await sync.pushNow()
+                let uploaded = Set(document.flyers.filter { sync.isUploaded(flyerID: $0.id) }.flatMap(\.allAssetIDs))
+                savedInFlyers.removeAll { !uploaded.contains($0) }
+            }
+            if !savedInFlyers.isEmpty { await removeFromLibrary(savedInFlyers) }
         }
 
         if let stopReason { alertMessage = stopReason }
@@ -136,6 +161,34 @@ public final class FlyersEngine: ObservableObject {
     }
 
     public var isPaused: Bool { document.scanPaused == true }
+
+    /// iCloud Photos' cross-device IDs for the photos in the current scan, by local ID.
+    private var cloudIDs: [String: String] = [:]
+
+    /// How long another device's claim on a photo holds before it counts as abandoned.
+    public static let claimTimeout: TimeInterval = 600
+
+    /// What this or another device already did with a photo, found by either ID.
+    private func photoRecord(_ id: String) -> PhotoRecord? {
+        document.photos[id] ?? cloudIDs[id].flatMap { document.photos[FlyersEngine.cloudKey($0)] }
+    }
+
+    /// Photos synced from a device whose library this one can't match yet wait under their cloud ID.
+    static func cloudKey(_ cloudID: String) -> String { "cloud:" + cloudID }
+
+    /// Whether a photo still needs reading here.
+    private func isPending(_ id: String, now: Date = Date()) -> Bool {
+        guard let record = photoRecord(id) else { return true }
+        switch record.status {
+        case .failed:
+            return record.attempts < maxAttempts
+        case .claimed:
+            // Someone else's fresh claim is respected. An old one, or our own left by a crash, isn't.
+            return record.claimedBy == deviceID || now.timeIntervalSince(record.processedAt) >= FlyersEngine.claimTimeout
+        default:
+            return false
+        }
+    }
 
     public func clearDropSummary() { dropSummary = nil }
 
@@ -332,10 +385,11 @@ public final class FlyersEngine: ObservableObject {
                 : sending.enumerated().filter { numbers.contains($0.offset + 1) }.map(\.element)
             let main = used[0]
             let flyerID = UUID()
-            let new = Ingest.events(
+            var new = Ingest.events(
                 from: result.only(extracted), flyerID: flyerID, takenOn: takenOn, today: .today,
                 settings: document.settings, existingFingerprints: fingerprints
             )
+            for index in new.indices { new[index].ownerDevice = deviceID }
             guard !new.isEmpty else { continue }
             fingerprints.formUnion(new.map(\.fingerprint))
             var thumbnailName: String?
@@ -515,10 +569,13 @@ public final class FlyersEngine: ObservableObject {
         deleteSavedPhotos(of: flyerIDs)
     }
 
-    private func record(_ id: String, status: PhotoStatus, error: String? = nil, attempts: Int? = nil) {
+    private func record(
+        _ id: String, status: PhotoStatus, error: String? = nil, attempts: Int? = nil, claimedBy: String? = nil
+    ) {
         let previous = document.photos[id]?.attempts ?? 0
         document.photos[id] = PhotoRecord(
-            status: status, attempts: attempts ?? previous + 1, lastError: error, processedAt: Date()
+            status: status, attempts: attempts ?? previous + 1, lastError: error, processedAt: Date(),
+            cloudID: cloudIDs[id] ?? document.photos[id]?.cloudID, claimedBy: claimedBy
         )
         persist()
     }
@@ -528,7 +585,8 @@ public final class FlyersEngine: ObservableObject {
     /// Adds anything waiting. Without a calendar yet, events simply wait for one.
     public func flushQueue() {
         guard calendar.isReady else { return }
-        for index in document.events.indices where document.events[index].state == .queued {
+        // Another device's queued events are its to add, so they never land on Calendar twice.
+        for index in document.events.indices where document.events[index].state == .queued && isOwnedHere(document.events[index]) {
             do {
                 let itemID = try calendar.add(
                     document.events[index], alertMinutesBefore: document.settings.alertMinutesBefore
@@ -550,13 +608,14 @@ public final class FlyersEngine: ObservableObject {
         change(id) {
             $0.state = .queued
             $0.problems.removeAll()
+            $0.ownerDevice = deviceID
         }
         flushQueue()
     }
 
     /// Removes an event from the calendar but keeps it in the app.
     public func removeFromCalendar(_ id: UUID) {
-        guard let event = event(id: id), let itemID = event.calendarItemID else { return }
+        guard let event = event(id: id), let itemID = calendarItemID(for: event) else { return }
         try? calendar.remove(itemID: itemID)
         change(id) {
             $0.calendarItemID = nil
@@ -570,7 +629,7 @@ public final class FlyersEngine: ObservableObject {
         var removed: [UUID] = []
         for id in ids {
             guard let event = event(id: id), !event.isHidden else { continue }
-            if let itemID = event.calendarItemID { try? calendar.remove(itemID: itemID) }
+            if let itemID = calendarItemID(for: event) { try? calendar.remove(itemID: itemID) }
             change(id) {
                 $0.stateBeforeDelete = $0.state
                 $0.state = .deleted
@@ -602,6 +661,7 @@ public final class FlyersEngine: ObservableObject {
                 let previous = $0.stateBeforeDelete ?? .available
                 $0.state = previous == .onCalendar ? .queued : previous
                 $0.stateBeforeDelete = nil
+                if $0.state == .queued { $0.ownerDevice = deviceID }
             }
         }
         lastDeletedIDs = []
@@ -625,6 +685,7 @@ public final class FlyersEngine: ObservableObject {
                 case .deleted:
                     let previous = $0.stateBeforeDelete ?? .available
                     $0.state = previous == .onCalendar ? .queued : previous
+                    if $0.state == .queued { $0.ownerDevice = deviceID }
                 case .removedInCalendar:
                     $0.state = .available
                 default:
@@ -646,7 +707,7 @@ public final class FlyersEngine: ObservableObject {
             $0.locationInferred = false
             $0.startUncertain = false
         }
-        if let event = event(id: id), let itemID = event.calendarItemID {
+        if let event = event(id: id), let itemID = calendarItemID(for: event) {
             do {
                 try calendar.update(event, itemID: itemID)
             } catch {
@@ -666,7 +727,9 @@ public final class FlyersEngine: ObservableObject {
         var changed = false
         for index in document.events.indices {
             var event = document.events[index]
-            guard event.state == .onCalendar, var itemID = event.calendarItemID else { continue }
+            // Only the owner reads Calendar's changes back, so a sync that arrives before Calendar's
+            // own can't make another device undo an edit.
+            guard event.state == .onCalendar, isOwnedHere(event), var itemID = event.calendarItemID else { continue }
             var snapshot = calendar.snapshot(itemID: itemID)
             // A sync can give the event a new ID. Its cross-device ID still finds it.
             if snapshot == nil, let externalID = event.calendarExternalID, let found = calendar.itemID(externalID: externalID) {
@@ -765,6 +828,36 @@ public final class FlyersEngine: ObservableObject {
 
     // MARK: Plumbing
 
+    /// Saves what a sync brought in, then adds anything now waiting for this device's calendar.
+    func saveFromSync() {
+        persist()
+        flushQueue()
+    }
+
+    /// Changes settings without counting it as a change to send back.
+    func updateSettingsFromSync(_ change: (inout AppSettings) -> Void) {
+        change(&document.settings)
+    }
+
+    func photosCloudIDs(for localIDs: [String]) -> [String: String] {
+        photos.cloudIDs(forLocal: localIDs.filter { !$0.hasPrefix("cloud:") && $0 != "demo" && !$0.hasPrefix("dropped:") })
+    }
+
+    func photosLocalIDs(for cloudIDs: [String]) -> [String: String] {
+        photos.localIDs(forCloud: Array(Set(cloudIDs)))
+    }
+
+    /// Whether this device adds the event to Calendar and watches Calendar for it.
+    public func isOwnedHere(_ event: FlyerEvent) -> Bool {
+        event.ownerDevice == nil || event.ownerDevice == deviceID
+    }
+
+    /// The event's Calendar entry on this device. One another device added is found by its
+    /// cross-device ID, since Calendar gives it a different item ID here.
+    private func calendarItemID(for event: FlyerEvent) -> String? {
+        event.calendarItemID ?? event.calendarExternalID.flatMap { calendar.itemID(externalID: $0) }
+    }
+
     private func change(_ id: UUID, _ apply: (inout FlyerEvent) -> Void) {
         guard let index = document.events.firstIndex(where: { $0.id == id }) else { return }
         apply(&document.events[index])
@@ -776,5 +869,6 @@ public final class FlyersEngine: ObservableObject {
         } catch {
             alertMessage = "Couldn't save your library: \(error.localizedDescription)"
         }
+        sync?.changed()
     }
 }

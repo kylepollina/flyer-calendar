@@ -37,6 +37,16 @@ public struct DocumentStore: Sendable {
         try encoder.encode(document).write(to: fileURL, options: .atomic)
     }
 
+    /// A random ID for this copy of the app, made once. Syncing devices use it to tell each other apart.
+    public func deviceID() -> String {
+        let url = directory.appendingPathComponent("device-id")
+        if let saved = try? String(contentsOf: url, encoding: .utf8), !saved.isEmpty { return saved }
+        let id = UUID().uuidString
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? id.write(to: url, atomically: true, encoding: .utf8)
+        return id
+    }
+
     public func saveThumbnail(_ data: Data, name: String) throws {
         try FileManager.default.createDirectory(at: thumbnailsDirectory, withIntermediateDirectories: true)
         try data.write(to: thumbnailsDirectory.appendingPathComponent(name), options: .atomic)

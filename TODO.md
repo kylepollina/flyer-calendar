@@ -66,13 +66,19 @@ skips anything the phone already handled. If you never open the phone app, the M
 
 ### Sync
 
+How it works is written at the top of `Sources/FlyersCore/Sync.swift`. The merge rules are tested with two
+devices and a fake cloud in `SyncTests.swift`. `CloudSync.swift` carries the records through iCloud.
+
+- [x] Sync records for flyers (with their photos), events, read photos and settings. The later change to a record wins.
+- [x] Match photos across devices by iCloud Photos' cloud ID, and claim photos before reading them.
+- [x] Only the device that found an event adds it to Calendar and reads Calendar's changes back. Other devices find it by its cross-device ID to edit or delete it.
+- [x] Only remove an original from Photos once its flyer has reached iCloud.
+- [x] `CloudSync`: carry the records through CloudKit with `CKSyncEngine`. Builds, but hasn't run yet.
+- [ ] Register the App ID and an iCloud container on the developer account, and add the iCloud entitlement to both apps.
+- [ ] Switch `CloudSync` on in both apps, and show sync status and errors in Settings.
+- [ ] Try it for real with the Mac and an iPhone.
+- [ ] Sync spending, summed across devices, so the monthly limit covers both.
 - [ ] Add the Mac app to the Xcode project. iCloud needs a provisioning profile, which the `build-app.sh` build can't carry.
-- [ ] Sync flyers, events and settings as CloudKit records with `CKSyncEngine`, one record per event, so an edit on one device and a scan on the other don't overwrite each other.
-- [ ] Key the handled-photos record (`document.photos`) by iCloud Photos' cloud ID (`PHPhotoLibrary.cloudIdentifierMappings`) and sync it. Photos' local IDs differ on each device.
-- [ ] Before scanning a photo, write a claim ("phone is reading this") to the synced record. The other device skips claimed photos, and a claim older than about 10 minutes counts as abandoned.
-- [ ] Rely on event fingerprints to drop duplicates if two devices read the same flyer anyway.
-- [ ] Only the device that found an event adds it to Calendar. Its saved cross-device Calendar ID (`calendarExternalID`) lets the other device find it and apply edits.
-- [ ] Upload saved photo copies to CloudKit, and only remove an original from Photos once its copy has finished uploading. Deleting from iCloud Photos removes it from every device.
 - [ ] Sync the API key with iCloud Keychain (`kSecAttrSynchronizable`) so the phone and Share extension can use it.
 - [ ] Turn scanning on the phone on by default once sync works.
 

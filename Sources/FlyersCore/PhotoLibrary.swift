@@ -24,6 +24,15 @@ public protocol PhotoSource: Sendable {
     /// Moves photos to Recently Deleted. Photos asks you to confirm, and this returns false
     /// if you decline.
     func delete(ids: [String]) async throws -> Bool
+    /// iCloud Photos' cross-device IDs for photos in this library, by local ID.
+    func cloudIDs(forLocal ids: [String]) -> [String: String]
+    /// This library's local IDs for photos synced from another device, by cloud ID.
+    func localIDs(forCloud ids: [String]) -> [String: String]
+}
+
+extension PhotoSource {
+    public func cloudIDs(forLocal ids: [String]) -> [String: String] { [:] }
+    public func localIDs(forCloud ids: [String]) -> [String: String] { [:] }
 }
 
 public struct PhotoLibrary: PhotoSource {
@@ -78,6 +87,25 @@ public struct PhotoLibrary: PhotoSource {
         } catch let error as PHPhotosError where error.code == .userCancelled {
             return false
         }
+    }
+
+    public func cloudIDs(forLocal ids: [String]) -> [String: String] {
+        guard !ids.isEmpty, PhotoLibrary.isAuthorized else { return [:] }
+        var output: [String: String] = [:]
+        for (local, result) in PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: ids) {
+            if case .success(let cloud) = result { output[local] = cloud.stringValue }
+        }
+        return output
+    }
+
+    public func localIDs(forCloud ids: [String]) -> [String: String] {
+        guard !ids.isEmpty, PhotoLibrary.isAuthorized else { return [:] }
+        var output: [String: String] = [:]
+        let cloud = ids.map(PHCloudIdentifier.init(stringValue:))
+        for (identifier, result) in PHPhotoLibrary.shared().localIdentifierMappings(for: cloud) {
+            if case .success(let local) = result { output[identifier.stringValue] = local }
+        }
+        return output
     }
 
     public func imageData(id: String) async throws -> Data {
