@@ -27,6 +27,10 @@ final class PhoneModel: ObservableObject {
     @Published var hasAPIKey: Bool
     @Published var hasPhotoAccess: Bool
     @Published var hasCalendarAccess: Bool
+    /// Flyers left with no events after a delete, waiting for you to choose whether to delete their photos.
+    @Published var orphanedFlyers: [Flyer] = []
+    /// Shows first-run setup. You can close it and come back from Settings.
+    @Published var isShowingSetup = false
     /// Off until this iPhone and your Mac share what they've scanned. With both scanning the same
     /// iCloud library on their own, each photo would be paid for and added to Calendar twice.
     @Published var scansHere: Bool {
@@ -36,7 +40,7 @@ final class PhoneModel: ObservableObject {
     private static let scansHereKey = "scansOnThisDevice"
 
     init() {
-        let demo = CommandLine.arguments.contains("--demo")
+        let demo = CommandLine.arguments.contains("--demo") || CommandLine.arguments.contains("--demo-setup")
         isDemo = demo
         scansHere = UserDefaults.standard.bool(forKey: PhoneModel.scansHereKey)
         if demo {
@@ -47,9 +51,12 @@ final class PhoneModel: ObservableObject {
                 store: store, photos: PhotoLibrary(), extractor: AnthropicClient(), calendar: DemoCalendar(),
                 apiKey: { nil }, document: PhoneDemo.document(store: store)
             )
-            hasAPIKey = true
-            hasPhotoAccess = true
-            hasCalendarAccess = true
+            // --demo-setup shows first-run setup over the demo, as if nothing were allowed yet.
+            let previewSetup = CommandLine.arguments.contains("--demo-setup")
+            hasAPIKey = !previewSetup
+            hasPhotoAccess = !previewSetup
+            hasCalendarAccess = !previewSetup
+            isShowingSetup = previewSetup
             return
         }
         let store = DocumentStore(directory: DocumentStore.defaultDirectory)
@@ -65,6 +72,35 @@ final class PhoneModel: ObservableObject {
         hasCalendarAccess = CalendarService.hasAccess
         // Saves the scan start date, so photos taken before the first launch stay out of it.
         engine.updateSettings { _ in }
+        isShowingSetup = !isSetUp
+    }
+
+    /// Everything Flyers needs before it can put flyers on your calendar.
+    var isSetUp: Bool {
+        hasAPIKey && hasPhotoAccess && hasCalendarAccess && (isDemo || engine.document.settings.calendarID != nil)
+    }
+
+    /// Deletes events, then offers to delete photos they were the last events from.
+    func delete(_ ids: [UUID]) {
+        let flyers = engine.flyersOnlyUsedBy(ids)
+        engine.delete(ids)
+        orphanedFlyers = flyers.filter { $0.assetID != "demo" }
+    }
+
+    func createFlyersCalendar() {
+        if let id = try? calendarService.createFlyersCalendar() { chooseCalendar(id) }
+    }
+
+    /// Where each of a flyer's photos can be loaded from, in order: the copy saved in Flyers,
+    /// or, for older flyers, your Photos library.
+    func photoSources(_ flyer: Flyer?) -> [PhoneImageSource] {
+        guard let flyer else { return [] }
+        return flyer.allAssetIDs.enumerated().map { index, assetID in
+            if let files = flyer.photoFiles, files.indices.contains(index) {
+                return .file(engine.store.photoURL(files[index]))
+            }
+            return .library(assetID)
+        }
     }
 
     var canScan: Bool { !isDemo && scansHere && hasAPIKey && hasPhotoAccess }
@@ -84,16 +120,15 @@ final class PhoneModel: ObservableObject {
 
     func thumbnail(_ flyer: Flyer?) -> UIImage? {
         guard let name = flyer?.thumbnailFile else { return nil }
-        return UIImage(contentsOfFile: engine.store.thumbnailsDirectory.appendingPathComponent(name).path)
+        if let cached = thumbnails[name] { return cached }
+        let image = UIImage(contentsOfFile: engine.store.thumbnailsDirectory.appendingPathComponent(name).path)
+        thumbnails[name] = image
+        return image
     }
 
-    /// The full-size copy saved in Flyers, when there is one, else the small preview.
-    func photo(_ flyer: Flyer?) -> UIImage? {
-        if let name = flyer?.photoFiles?.first, let image = UIImage(contentsOfFile: engine.store.photoURL(name).path) {
-            return image
-        }
-        return thumbnail(flyer)
-    }
+    /// Rows and backdrops ask for the same small images many times while scrolling.
+    private var thumbnails: [String: UIImage] = [:]
+
 
     func requestPhotoAccess() async {
         hasPhotoAccess = await PhotoLibrary.requestAccess()
@@ -123,6 +158,26 @@ final class PhoneModel: ObservableObject {
     func removeAPIKey() {
         APIKeyStore.delete()
         hasAPIKey = false
+    }
+}
+
+/// Where a flyer photo can be loaded from.
+enum PhoneImageSource: Hashable, Sendable {
+    case file(URL)
+    case library(String)
+
+    /// Decodes off the main thread at a size that still holds detail when zoomed in.
+    func load() async -> UIImage? {
+        let data: Data?
+        switch self {
+        case .file(let url):
+            data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+        case .library(let id):
+            data = try? await PhotoLibrary().imageData(id: id)
+        }
+        guard let data else { return nil }
+        let image = await Task.detached(priority: .userInitiated) { ImageTools.decode(data, maxEdge: 3000) }.value
+        return image.map { UIImage(cgImage: $0) }
     }
 }
 

@@ -71,9 +71,11 @@ struct PhoneMapView: View {
                     .pickerStyle(.segmented)
                     if isSearching { ProgressView() }
                 }
-                .padding(.horizontal)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(.bar)
+                .glassSurface(in: Capsule())
+                .padding(.horizontal)
+                .padding(.top, 4)
             }
             .safeAreaInset(edge: .bottom) {
                 if let pin = pins.first(where: { $0.id == selectedPin }) { pinCard(pin) }
@@ -114,9 +116,10 @@ struct PhoneMapView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .glassSurface(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .padding(.horizontal)
         .padding(.bottom, 8)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     /// Looks places up one at a time, which stays well inside MapKit's search limits.

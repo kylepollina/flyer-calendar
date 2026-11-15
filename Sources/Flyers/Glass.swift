@@ -1,13 +1,38 @@
-import AppKit
 import SwiftUI
 
-// Liquid Glass needs macOS 26, and the app still runs on macOS 15, where these fall back to
-// materials and the standard button styles.
+// Shared by the Mac and iPhone apps. Liquid Glass needs macOS 26 or iOS 26, and the apps still run
+// on macOS 15 and iOS 18, where these fall back to materials and the standard button styles.
+
+#if canImport(AppKit)
+import AppKit
+typealias PlatformImage = NSImage
+
+extension Image {
+    init(platformImage: NSImage) { self.init(nsImage: platformImage) }
+}
+
+extension Color {
+    /// The plain background behind the app's pages.
+    static var appBackground: Color { Color.appBackground }
+}
+#else
+import UIKit
+typealias PlatformImage = UIImage
+
+extension Image {
+    init(platformImage: UIImage) { self.init(uiImage: platformImage) }
+}
+
+extension Color {
+    /// The plain background behind the app's pages.
+    static var appBackground: Color { Color(uiColor: .systemBackground) }
+}
+#endif
 
 extension View {
     /// A glass surface behind this view.
     @ViewBuilder func glassSurface<S: Shape>(in shape: S, tint: Color? = nil) -> some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, iOS 26.0, *) {
             glassEffect(tint.map { Glass.regular.tint($0) } ?? .regular, in: shape)
         } else {
             background(.regularMaterial, in: shape)
@@ -15,7 +40,7 @@ extension View {
     }
 
     @ViewBuilder func glassButton(prominent: Bool = false) -> some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, iOS 26.0, *) {
             if prominent {
                 buttonStyle(.glassProminent)
             } else {
@@ -35,7 +60,7 @@ struct GlassGroup<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, iOS 26.0, *) {
             GlassEffectContainer(spacing: spacing, content: content)
         } else {
             content()
@@ -60,15 +85,15 @@ struct GlassCard<Content: View>: View {
 /// The flyer's own colors, blurred behind the detail pane, so each event has its own look
 /// and the glass on top has something to refract.
 struct FlyerBackdrop: View {
-    let image: NSImage?
+    let image: PlatformImage?
 
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            Color.appBackground
             if let image {
                 Color.clear
                     .overlay {
-                        Image(nsImage: image)
+                        Image(platformImage: image)
                             .resizable()
                             .scaledToFill()
                             .blur(radius: 70)
@@ -77,7 +102,7 @@ struct FlyerBackdrop: View {
                     }
                     .clipped()
                 LinearGradient(
-                    colors: [.clear, Color(nsColor: .windowBackgroundColor).opacity(0.75)],
+                    colors: [.clear, Color.appBackground.opacity(0.75)],
                     startPoint: .top, endPoint: .bottom
                 )
             }
@@ -92,7 +117,7 @@ struct FlyerBackdrop: View {
 struct SetupBackdrop: View {
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            Color.appBackground
             MeshGradient(
                 width: 3, height: 3,
                 points: [

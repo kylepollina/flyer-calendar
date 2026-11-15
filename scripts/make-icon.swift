@@ -1,19 +1,26 @@
 // Draws the app icon: a flyer with a calendar on it, pinned to a coral background.
-// Usage: swift scripts/make-icon.swift <output.png>
+// Usage: swift scripts/make-icon.swift <output.png> [--ios]
+// With --ios it fills the whole square with no transparency, since iOS rounds the corners itself.
 import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
 let size = 1024
+let forIOS = CommandLine.arguments.contains("--ios")
 let space = CGColorSpace(name: CGColorSpace.sRGB)!
 let context = CGContext(
     data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
-    space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    space: space, bitmapInfo: (forIOS ? CGImageAlphaInfo.noneSkipLast : CGImageAlphaInfo.premultipliedLast).rawValue
 )!
 // Draw with the origin at the top-left.
 context.translateBy(x: 0, y: CGFloat(size))
 context.scaleBy(x: 1, y: -1)
+if forIOS {
+    // The macOS grid's 824-point square fills the whole iOS canvas.
+    context.scaleBy(x: 1024 / 824, y: 1024 / 824)
+    context.translateBy(x: -100, y: -100)
+}
 
 func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor {
     CGColor(colorSpace: space, components: [r, g, b, a])!
@@ -30,7 +37,9 @@ let cell = color(0.86, 0.82, 0.73)
 let yellow = color(0.99, 0.78, 0.20)
 
 // Background, on the standard macOS icon grid: 824 points inside a 1024 canvas.
-let background = rounded(CGRect(x: 100, y: 100, width: 824, height: 824), 186)
+let background = forIOS
+    ? CGPath(rect: CGRect(x: 100, y: 100, width: 824, height: 824), transform: nil)
+    : rounded(CGRect(x: 100, y: 100, width: 824, height: 824), 186)
 context.saveGState()
 context.setShadow(offset: CGSize(width: 0, height: -14), blur: 28, color: color(0, 0, 0, 0.30))
 context.addPath(background)

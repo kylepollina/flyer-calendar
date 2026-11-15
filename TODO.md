@@ -32,43 +32,53 @@ These haven't been confirmed in real use yet.
 
 ## 5. iPhone app that syncs with the Mac
 
+Goal: the iPhone app does everything the Mac app does, looks as polished, and stays in sync with it.
 Either device scans. Your phone usually gets to new photos first, when you open the app, and the Mac
 skips anything the phone already handled. If you never open the phone app, the Mac still catches everything.
 
-### Before starting
+### Done
 
-- [x] Check that team K9NSF24HZ7 is a paid Apple Developer Program membership. It is, so iCloud sync is available.
+- [x] Team K9NSF24HZ7 is a paid Apple Developer Program membership, so iCloud sync is available.
+- [x] Xcode project (`iOS/Flyers.xcodeproj`) with an iPhone app that uses `FlyersCore`.
+- [x] Lists, event page, map of every event, settings, pinch-to-zoom photo.
+- [x] Scan when you open the app, behind a Settings switch until sync exists.
 
-### Step 1: Xcode project
+### Polish: match the Mac
 
-- [x] Make an Xcode project (`iOS/Flyers.xcodeproj`) with an iPhone app that uses `FlyersCore`.
-- [ ] Add the Mac app to that project. iCloud needs a provisioning profile, which the `build-app.sh` build can't carry.
-- [ ] Add a Share extension.
-- [x] Replace the Mac-only parts for iPhone: images, the zoomable photo viewer, and opening links and maps.
-- [ ] Edit an event on iPhone, an app icon, and the `flyers://` link from Calendar.
-- [x] Keep the menu bar, start at login and the background scheduler Mac-only.
-- [x] Get the iPhone app running on its own local data, to prove the shared code works on iOS. Scanning on the iPhone is off by default until sync exists, so it can't double up with the Mac.
-- [ ] Install it on a real iPhone from Xcode and try it.
+- [x] Share the Mac's Liquid Glass styling (`Glass.swift`) with the iPhone app, falling back to materials before iOS 26.
+- [x] Event page: the flyer's blurred colors behind it, a big poster header, glass cards and glass buttons.
+- [x] List: glass tab switcher, floating glass notices for scan progress and Undo, swipe actions with haptics.
+- [x] Map and photo viewer: glass controls.
+- [x] First-run setup: a welcome screen with a card per step (API key, Photos, Calendar), like the Mac.
+- [x] App icon.
+- [ ] Check it on a real iPhone on iOS 26. The simulators here stop at iOS 18.5, which can't show Liquid Glass.
 
-### Step 2: iCloud sync
+### Parity: everything the Mac does
 
+- [x] Remove Photo from Photos on the event page.
+- [x] Deleted section under Past, with Restore.
+- [x] "Delete the photo too?" after deleting a photo's last event.
+- [x] Photo viewer pages through every photo of a flyer.
+- [x] Edit an event.
+- [x] Settings: alert time, add mode (automatic or review), saved photos, clearing past events' photos.
+- [ ] Open an event from the `flyers://` link in Calendar.
+- [ ] Share extension, in place of the Mac's drag and drop.
+
+### Sync
+
+- [ ] Add the Mac app to the Xcode project. iCloud needs a provisioning profile, which the `build-app.sh` build can't carry.
 - [ ] Sync flyers, events and settings as CloudKit records with `CKSyncEngine`, one record per event, so an edit on one device and a scan on the other don't overwrite each other.
 - [ ] Key the handled-photos record (`document.photos`) by iCloud Photos' cloud ID (`PHPhotoLibrary.cloudIdentifierMappings`) and sync it. Photos' local IDs differ on each device.
 - [ ] Before scanning a photo, write a claim ("phone is reading this") to the synced record. The other device skips claimed photos, and a claim older than about 10 minutes counts as abandoned.
 - [ ] Rely on event fingerprints to drop duplicates if two devices read the same flyer anyway.
-- [ ] Only the device that found an event adds it to Calendar. Save its shared Calendar ID (`calendarItemExternalIdentifier`) in the synced record, so the other device never adds it again and either device can apply edits.
+- [ ] Only the device that found an event adds it to Calendar. Its saved cross-device Calendar ID (`calendarExternalID`) lets the other device find it and apply edits.
 - [ ] Upload saved photo copies to CloudKit, and only remove an original from Photos once its copy has finished uploading. Deleting from iCloud Photos removes it from every device.
 - [ ] Sync the API key with iCloud Keychain (`kSecAttrSynchronizable`) so the phone and Share extension can use it.
+- [ ] Turn scanning on the phone on by default once sync works.
 
-### Step 3: Scanning on iPhone
+### Later
 
-- [x] Scan when you open the app, with the same 2-minute photo grouping as the Mac (behind the Settings switch for now).
 - [ ] Ask iOS for occasional background time with `BGProcessingTask`. It usually comes overnight while charging.
-- [ ] Share extension: share a screenshot to Flyers and get its events right away.
-
-### Step 4: Polish
-
-- [x] Pinch to zoom on iPhone, and maps.
 - [ ] Widgets.
 
 ## 6. v2 features
