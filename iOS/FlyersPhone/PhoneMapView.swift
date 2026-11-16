@@ -34,6 +34,8 @@ struct PhoneMapView: View {
     @State private var places: [UUID: FoundPlace] = [:]
     /// The open pin, by the events in it, so it stays open while grouping changes.
     @State private var selectedEvents: Set<UUID> = []
+    /// When a pin was last tapped, so the same tap reaching the map doesn't close it again.
+    @State private var lastPinTap = Date.distantPast
     @State private var isSearching = false
     @State private var position = MapCameraPosition.automatic
     @State private var viewport: MapGrouping.Viewport?
@@ -87,6 +89,7 @@ struct PhoneMapView: View {
                             count: pin.events.count,
                             isSelected: isSelected(pin)
                         ) {
+                            lastPinTap = Date()
                             selectedEvents = isSelected(pin) ? [] : Set(pin.events.map(\.id))
                         }
                     }
@@ -95,6 +98,16 @@ struct PhoneMapView: View {
                 }
             }
             .mapControls { MapCompass() }
+            // Tapping anywhere else on the map closes an open pin's card. A tap on a pin can reach
+            // the map too, so this waits a moment and leaves it be if a pin just took it.
+            .onTapGesture {
+                guard !selectedEvents.isEmpty else { return }
+                DispatchQueue.main.async {
+                    if Date().timeIntervalSince(lastPinTap) > 0.3 {
+                        withAnimation(.snappy) { selectedEvents = [] }
+                    }
+                }
+            }
             .onGeometryChange(for: CGSize.self, of: \.size) { mapSize = $0 }
             .onMapCameraChange(frequency: .onEnd) { context in
                 savedRegion = MapLook.encode(context.region)
