@@ -139,6 +139,7 @@ final class AppModel: ObservableObject {
             apiKey: { APIKeyStore.read() }, document: document
         )
         self.engine = engine
+        APIKeyStore.moveToICloud()
         hasAPIKey = APIKeyStore.read() != nil
         hasPhotoAccess = PhotoLibrary.isAuthorized
         hasCalendarAccess = CalendarService.hasAccess
@@ -214,6 +215,7 @@ final class AppModel: ObservableObject {
 
     func refreshAccess() {
         guard !isDemo else { return }
+        hasAPIKey = APIKeyStore.read() != nil
         hasPhotoAccess = PhotoLibrary.isAuthorized
         hasCalendarAccess = CalendarService.hasAccess
     }

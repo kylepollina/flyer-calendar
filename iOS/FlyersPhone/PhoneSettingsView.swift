@@ -74,8 +74,13 @@ struct PhoneSettingsView: View {
                 Button("Scan Now") { Task { await model.scanNow() } }
                     .disabled(!model.canScan || engine.isScanning)
             }
-            if !model.hasPhotoAccess {
+            if model.scansHere && !model.hasPhotoAccess {
                 Button("Allow Access to Photos") { Task { await model.requestPhotoAccess() } }
+            }
+            if model.scansHere && !model.hasAPIKey {
+                Text("Add your Anthropic API key below to start. A key saved on your Mac shows up here through iCloud Keychain.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         } header: {
             Text("Scanning")
@@ -140,7 +145,7 @@ struct PhoneSettingsView: View {
         } header: {
             Text("Anthropic API key")
         } footer: {
-            Text("Flyers sends photos that look like flyers to Anthropic's API to read them, using your own key.")
+            Text("Flyers sends photos that look like flyers to Anthropic's API to read them, using your own key. It syncs to your other devices through iCloud Keychain.")
         }
     }
 }
@@ -215,18 +220,28 @@ struct PhoneSetupView: View {
                     }
                     .padding(.bottom, 8)
 
-                    SetupStepCard(symbol: "key.fill", title: "Anthropic API key", done: model.hasAPIKey,
-                                  detail: "Flyers reads flyers with Claude, using your own key.") {
-                        VStack(alignment: .leading, spacing: 8) { APIKeyField(model: model) }
-                            .textFieldStyle(.roundedBorder)
+                    if model.cloudSync != nil {
+                        SetupStepCard(symbol: "icloud.fill", title: "Synced with your Mac", done: true,
+                                      detail: "Flyers your Mac finds show up here through iCloud. Turn on scanning in Settings to read photos on this iPhone too.") {
+                            EmptyView()
+                        }
                     }
-                    SetupStepCard(symbol: "photo.on.rectangle", title: "Photos", done: model.hasPhotoAccess,
-                                  detail: "To look through your new photos for flyers.") {
-                        Button("Allow Access") { Task { await model.requestPhotoAccess() } }.glassButton(prominent: true)
+                    if model.needsScanningSetup {
+                        SetupStepCard(symbol: "key.fill", title: "Anthropic API key", done: model.hasAPIKey,
+                                      detail: "Flyers reads flyers with Claude, using your own key. It syncs through iCloud Keychain.") {
+                            VStack(alignment: .leading, spacing: 8) { APIKeyField(model: model) }
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        SetupStepCard(symbol: "photo.on.rectangle", title: "Photos", done: model.hasPhotoAccess,
+                                      detail: "To look through your new photos for flyers.") {
+                            Button("Allow Access") { Task { await model.requestPhotoAccess() } }.glassButton(prominent: true)
+                        }
                     }
                     SetupStepCard(symbol: "calendar", title: "Calendar",
                                   done: model.hasCalendarAccess && engine.document.settings.calendarID != nil,
-                                  detail: "To add the events Flyers finds.") {
+                                  detail: model.cloudSync != nil
+                                      ? "To change or delete events in your calendar from this iPhone."
+                                      : "To add the events Flyers finds.") {
                         if model.hasCalendarAccess {
                             VStack(alignment: .leading, spacing: 8) { CalendarChooser(model: model, engine: engine) }
                                 .pickerStyle(.menu)

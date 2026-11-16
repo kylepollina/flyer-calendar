@@ -75,21 +75,34 @@ public struct DocumentStore: Sendable {
     }
 }
 
-/// Stores the API key in your login Keychain.
+/// The Anthropic API key, in iCloud Keychain so you enter it once for all your devices.
+///
+/// Keys saved before it synced are in this device's own keychain. They're still read, and moved to
+/// iCloud Keychain by `moveToICloud()`. Builds that can't reach iCloud Keychain, such as the Mac app
+/// built by `build-app.sh`, which has no app identifier, keep using this device's keychain.
 public enum APIKeyStore {
     private static let service = "app.flyers.anthropic-api-key"
     private static let account = "default"
 
-    private static var query: [String: Any] {
-        [
+    private static func query(synced: Bool) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
+        if synced {
+            query[kSecAttrSynchronizable as String] = true
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
+        return query
     }
 
     public static func read() -> String? {
-        var search = query
+        read(synced: true) ?? read(synced: false)
+    }
+
+    private static func read(synced: Bool) -> String? {
+        var search = query(synced: synced)
         search[kSecReturnData as String] = true
         search[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -99,16 +112,34 @@ public enum APIKeyStore {
     }
 
     public static func save(_ key: String) -> Bool {
+        if save(key, synced: true) {
+            // The synced copy is the one read from now on.
+            SecItemDelete(query(synced: false) as CFDictionary)
+            return true
+        }
+        return save(key, synced: false)
+    }
+
+    private static func save(_ key: String, synced: Bool) -> Bool {
         let data = Data(key.utf8)
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let status = SecItemUpdate(query(synced: synced) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecSuccess { return true }
         guard status == errSecItemNotFound else { return false }
-        var add = query
+        var add = query(synced: synced)
         add[kSecValueData as String] = data
+        if synced { add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock }
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
+    /// Moves a key saved before it synced into iCloud Keychain.
+    public static func moveToICloud() {
+        guard read(synced: true) == nil, let key = read(synced: false) else { return }
+        _ = save(key)
+    }
+
+    /// Removes the key from every device.
     public static func delete() {
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete(query(synced: true) as CFDictionary)
+        SecItemDelete(query(synced: false) as CFDictionary)
     }
 }

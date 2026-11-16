@@ -6,6 +6,7 @@ enum PhoneTab: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
     case review = "Review"
     case past = "Past"
+    case deleted = "Deleted"
     var id: String { rawValue }
 }
 
@@ -51,7 +52,7 @@ struct EventListView: View {
                         path = [id]
                     }
                 }
-                .fullScreenCover(isPresented: $model.isShowingSetup) { PhoneSetupView(model: model, engine: engine) }
+                .fullScreenCover(isPresented: $model.isShowingSetup, onDismiss: model.setupClosed) { PhoneSetupView(model: model, engine: engine) }
                 .photoDeletePrompt(model: model, engine: engine)
                 .sensoryFeedback(.success, trigger: engine.lastDeletedIDs) { _, new in !new.isEmpty }
                 .animation(.snappy, value: noticeKey)
@@ -64,6 +65,7 @@ struct EventListView: View {
             Text("Upcoming").tag(PhoneTab.upcoming)
             Text(reviewCount > 0 ? "Review \(reviewCount)" : "Review").tag(PhoneTab.review)
             Text("Past").tag(PhoneTab.past)
+            Text("Deleted").tag(PhoneTab.deleted)
         }
         .pickerStyle(.segmented)
         .padding(.horizontal)
@@ -102,24 +104,37 @@ struct EventListView: View {
             }
         case .past:
             let events = EventList.past(engine.document.events, today: today)
-            let hidden = engine.hiddenEvents
-            if events.isEmpty && hidden.isEmpty {
+            if events.isEmpty {
                 ContentUnavailableView(
                     "No past events", systemImage: "clock", description: Text("Events move here once they've finished.")
                 )
             } else {
                 List {
-                    if !events.isEmpty {
-                        Section { ForEach(events) { row(for: $0, day: $0.startDay) } }
-                    }
-                    if !hidden.isEmpty {
-                        Section {
-                            ForEach(hidden) { hiddenRow($0) }
-                        } header: {
-                            Text("Deleted")
-                        } footer: {
-                            Text("Deleted events stay here, so a rescan can't bring them back. Swipe one to restore it.")
+                    Section { ForEach(events) { row(for: $0, day: $0.startDay) } }
+                    bottomSpace
+                }
+            }
+        case .deleted:
+            let hidden = engine.hiddenEvents
+            if hidden.isEmpty {
+                ContentUnavailableView(
+                    "Nothing deleted", systemImage: "trash",
+                    description: Text("Events you delete, here or in Calendar, wait here in case you want them back.")
+                )
+            } else {
+                List {
+                    Section {
+                        ForEach(hidden) { hiddenRow($0) }
+                    } header: {
+                        HStack {
+                            Text("\(hidden.count) deleted")
+                            Spacer()
+                            Button("Restore All") { engine.restore(hidden.map(\.id)) }
+                                .font(.subheadline)
+                                .textCase(nil)
                         }
+                    } footer: {
+                        Text("Deleted events stay here, so a rescan can't bring them back. Swipe one to restore it.")
                     }
                     bottomSpace
                 }
@@ -135,7 +150,9 @@ struct EventListView: View {
     private var emptyMessage: String {
         model.scansHere
             ? "Photograph a flyer and it'll show up here the next time you open Flyers."
-            : "Scanning on this iPhone is off. Turn it on in Settings, or wait for syncing with your Mac."
+            : model.cloudSync != nil
+                ? "Flyers your Mac finds show up here through iCloud. To read photos on this iPhone too, turn on scanning in Settings."
+                : "Scanning on this iPhone is off. Turn it on in Settings."
     }
 
     private func row(for event: FlyerEvent, day: Day?) -> some View {

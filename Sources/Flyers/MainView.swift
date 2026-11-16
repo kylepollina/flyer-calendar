@@ -7,6 +7,7 @@ enum ListTab: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
     case review = "Needs review"
     case past = "Past"
+    case deleted = "Deleted"
     var id: String { rawValue }
 }
 
@@ -260,6 +261,7 @@ struct MainView: View {
                     Text("Upcoming").tag(ListTab.upcoming)
                     Text(reviewCount > 0 ? "Needs review \(reviewCount)" : "Needs review").tag(ListTab.review)
                     Text("Past").tag(ListTab.past)
+                    Text("Deleted").tag(ListTab.deleted)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -344,22 +346,35 @@ struct MainView: View {
             }
         case .past:
             let events = EventList.past(engine.document.events, today: today)
-            let hidden = engine.hiddenEvents
-            if events.isEmpty && hidden.isEmpty {
+            if events.isEmpty {
                 EmptyList(symbol: "clock", title: "No past events", message: "Events move here once they've finished.")
             } else {
                 List(selection: $selection) {
                     ForEach(events) { eventRow($0, day: $0.startDay) }
-                    if !hidden.isEmpty {
-                        // Deleted events stay in the library, so a rescan can't bring them back.
-                        // Here you can bring one back yourself.
-                        Section("Deleted") {
-                            ForEach(hidden) { hiddenRow($0) }
+                }
+                .listStyle(.sidebar)
+                .onDeleteCommand(perform: deleteSelection)
+            }
+        case .deleted:
+            // Deleted events stay in the library, so a rescan can't bring them back. Here you can
+            // bring them back yourself.
+            let hidden = engine.hiddenEvents
+            if hidden.isEmpty {
+                EmptyList(symbol: "trash", title: "Nothing deleted", message: "Events you delete, here or in Calendar, wait here in case you want them back.")
+            } else {
+                List {
+                    Section {
+                        ForEach(hidden) { hiddenRow($0) }
+                    } header: {
+                        HStack {
+                            Text("\(hidden.count) deleted")
+                            Spacer()
+                            Button("Restore All") { engine.restore(hidden.map(\.id)) }
+                                .buttonStyle(.borderless)
                         }
                     }
                 }
                 .listStyle(.sidebar)
-                .onDeleteCommand(perform: deleteSelection)
             }
         }
     }
@@ -372,6 +387,8 @@ struct MainView: View {
             return EventList.needingReview(engine.document.events).first?.id
         case .past:
             return EventList.past(engine.document.events, today: today).first?.id
+        case .deleted:
+            return nil
         }
     }
 

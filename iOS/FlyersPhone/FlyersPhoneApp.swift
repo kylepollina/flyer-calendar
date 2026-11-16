@@ -40,6 +40,7 @@ final class PhoneModel: ObservableObject {
     }
 
     private static let scansHereKey = "scansOnThisDevice"
+    private static let setupSeenKey = "setupSeen"
 
     init() {
         let demo = CommandLine.arguments.contains("--demo") || CommandLine.arguments.contains("--demo-setup")
@@ -74,17 +75,28 @@ final class PhoneModel: ObservableObject {
         cloudSync = CloudSync.containerIDFromInfo.map { CloudSync(engine: engine, containerID: $0) }
         // CloudKit tells the sync engine about changes from your other devices with a silent push.
         if cloudSync != nil { UIApplication.shared.registerForRemoteNotifications() }
+        APIKeyStore.moveToICloud()
         hasAPIKey = APIKeyStore.read() != nil
         hasPhotoAccess = PhotoLibrary.isAuthorized
         hasCalendarAccess = CalendarService.hasAccess
         // Saves the scan start date, so photos taken before the first launch stay out of it.
         engine.updateSettings { _ in }
-        isShowingSetup = !isSetUp
+        // Opens by itself until you've closed it once. After that it's in Settings.
+        isShowingSetup = !isSetUp && !UserDefaults.standard.bool(forKey: PhoneModel.setupSeenKey)
     }
 
-    /// Everything Flyers needs before it can put flyers on your calendar.
+    func setupClosed() {
+        if !isDemo { UserDefaults.standard.set(true, forKey: PhoneModel.setupSeenKey) }
+    }
+
+    /// Whether this iPhone reads photos itself, and so needs the API key and access to Photos.
+    /// With sync on and scanning off, flyers come from your Mac and only Calendar is needed.
+    var needsScanningSetup: Bool { cloudSync == nil || scansHere }
+
+    /// Everything this iPhone needs for what it does.
     var isSetUp: Bool {
-        hasAPIKey && hasPhotoAccess && hasCalendarAccess && (isDemo || engine.document.settings.calendarID != nil)
+        let calendarReady = hasCalendarAccess && (isDemo || engine.document.settings.calendarID != nil)
+        return calendarReady && (!needsScanningSetup || (hasAPIKey && hasPhotoAccess))
     }
 
     /// Deletes events, then offers to delete photos they were the last events from.
@@ -115,6 +127,8 @@ final class PhoneModel: ObservableObject {
     /// Runs each time the app comes to the front, which is when an iPhone app gets to work.
     func opened() async {
         guard !isDemo else { return }
+        // A key saved on another device arrives through iCloud Keychain.
+        hasAPIKey = APIKeyStore.read() != nil
         hasPhotoAccess = PhotoLibrary.isAuthorized
         hasCalendarAccess = CalendarService.hasAccess
         engine.reconcileWithCalendar()

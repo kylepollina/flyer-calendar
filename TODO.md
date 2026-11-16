@@ -81,7 +81,7 @@ devices and a fake cloud in `SyncTests.swift`. `CloudSync.swift` carries the rec
 - [ ] Push notifications on the Mac. It fetches when it comes to the front and before each scan for now.
 - [ ] Sync spending, summed across devices, so the monthly limit covers both.
 - [x] Add the Mac app to the Xcode project (target `FlyersMac`). iCloud needs a provisioning profile, which the `build-app.sh` build can't carry, so that build doesn't sync.
-- [ ] Sync the API key with iCloud Keychain (`kSecAttrSynchronizable`) so the phone and Share extension can use it.
+- [x] Sync the API key with iCloud Keychain (`kSecAttrSynchronizable`). Keys saved before move there at launch.
 - [ ] Turn scanning on the phone on by default once sync works.
 
 ### Later
