@@ -24,6 +24,9 @@ public final class FlyersEngine: ObservableObject {
     public let deviceID: String
     /// Connects to iCloud when sync is on. Nil keeps everything on this device.
     public weak var sync: SyncConnection?
+    /// True while records from other devices are applied. The connection is busy with its ledger
+    /// then, so saves don't tell it about changes. It asks for them once the apply is done.
+    var isApplyingSync = false
     private let photos: PhotoSource
     private let extractor: EventExtracting
     private let apiKey: () -> String?
@@ -890,6 +893,6 @@ public final class FlyersEngine: ObservableObject {
         } catch {
             alertMessage = "Couldn't save your library: \(error.localizedDescription)"
         }
-        sync?.changed()
+        if !isApplyingSync { sync?.changed() }
     }
 }

@@ -117,6 +117,7 @@ public final class CloudSync: ObservableObject, SyncConnection {
             for record in records { ledger.systemFields[record.recordID.recordName] = systemFields(of: record) }
             let incoming = records.compactMap(syncRecord(from:))
             engine?.applySyncRecords(incoming, ledger: &ledger)
+            changed()
             lastSyncAt = Date()
             lastError = nil
             saveLedger()
@@ -151,7 +152,10 @@ public final class CloudSync: ObservableObject, SyncConnection {
                 syncEngine?.state.add(pendingRecordZoneChanges: [.saveRecord(record.recordID)])
             } else {
                 pending[name] = nil
-                if let incoming = syncRecord(from: server) { engine?.applySyncRecords([incoming], ledger: &ledger) }
+                if let incoming = syncRecord(from: server) {
+                    engine?.applySyncRecords([incoming], ledger: &ledger)
+                    changed()
+                }
             }
         case .zoneNotFound:
             syncEngine?.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])

@@ -181,8 +181,14 @@ extension FlyersEngine {
 
     /// Applies what other devices changed. A record changed here more recently, and not yet sent,
     /// keeps this device's version, which goes out next.
+    ///
+    /// Saving here doesn't call the connection's `changed()`, since the connection is in the middle
+    /// of lending its ledger. It calls `changed()` itself afterwards, to send anything this changed,
+    /// such as an event added to Calendar.
     public func applySyncRecords(_ records: [SyncRecord], ledger: inout SyncLedger) {
         guard !records.isEmpty else { return }
+        isApplyingSync = true
+        defer { isApplyingSync = false }
         let current = Dictionary(currentSyncRecords(now: Date(), ledger: ledger).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         let cloudToLocal = photosLocalIDs(for: records.flatMap(cloudIDs(in:)))
         var applied = false

@@ -109,14 +109,23 @@ private final class MemorySync: SyncConnection {
     weak var engine: FlyersEngine?
     var ledger = SyncLedger()
     var uploadsWork = true
+    /// Changes waiting to be sent, as `CloudSync` keeps them.
+    var pending: [String: SyncRecord] = [:]
 
     init(_ cloud: MemoryCloud) { self.cloud = cloud }
 
-    func changed() {}
+    // Works with the ledger the way `CloudSync` does, so a call back in while the ledger is lent
+    // out traps here too.
+    func changed() {
+        guard let engine else { return }
+        for record in engine.outgoingSyncChanges(ledger: &ledger) { pending[record.name] = record }
+    }
 
     func pushNow() async {
-        guard let engine, uploadsWork else { return }
-        for record in engine.outgoingSyncChanges(ledger: &ledger) {
+        changed()
+        guard uploadsWork else { return }
+        for record in pending.values.sorted(by: { $0.name < $1.name }) {
+            pending[record.name] = nil
             if let existing = cloud.records[record.name], existing.modifiedAt > record.modifiedAt { continue }
             cloud.records[record.name] = record
             ledger.settle(record)
@@ -129,6 +138,7 @@ private final class MemorySync: SyncConnection {
             .filter { ledger.hashes[$0.name] != $0.payloadHash }
             .sorted { $0.name < $1.name }
         engine.applySyncRecords(incoming, ledger: &ledger)
+        changed()
     }
 
     func isUploaded(flyerID: UUID) -> Bool {
