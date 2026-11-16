@@ -17,6 +17,7 @@ struct EventDetailView: View {
             content(event)
         } else {
             ContentUnavailableView("Event deleted", systemImage: "trash")
+                .onAppear { dismiss() }
         }
     }
 
@@ -70,9 +71,9 @@ struct EventDetailView: View {
         }
     }
 
+    /// Asks first. Once the event is gone, this page closes itself.
     private func delete(_ ids: [UUID]) {
-        model.delete(ids)
-        dismiss()
+        model.requestDelete(ids)
     }
 
     // MARK: Pieces
@@ -527,7 +528,7 @@ struct PhotoEventsView: View {
                         }
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button("Delete", systemImage: "trash", role: .destructive) { model.delete([event.id]) }
+                        Button("Delete", systemImage: "trash", role: .destructive) { model.requestDelete([event.id]) }
                     }
                 }
             } footer: {

@@ -63,6 +63,8 @@ struct MainView: View {
     @State private var isDropTargeted = false
     /// Flyers left with no events after a delete, waiting for you to choose whether to delete their photos.
     @State private var orphanedFlyers: [Flyer] = []
+    /// Events waiting for you to confirm deleting them.
+    @State private var pendingDelete: [UUID] = []
 
     private var today: Day { .today }
 
@@ -184,6 +186,7 @@ struct MainView: View {
             reveal(id)
         }
         .onOpenURL(perform: openLink)
+        .confirmingDelete($pendingDelete, engine: engine, perform: performDelete)
     }
 
     /// ⌘1, ⌘2 and ⌘3 switch lists. A segmented picker can't hold shortcuts itself.
@@ -309,12 +312,12 @@ struct MainView: View {
                             .padding(.horizontal, 12)
                     }
                 }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 4)
-                // A glass panel, so rows scrolling under it never show through the text.
-                .glassSurface(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // A solid footer, so rows scrolling under it never show through.
+                .background(Color(nsColor: .windowBackgroundColor))
+                .overlay(alignment: .top) { Divider() }
             }
     }
 
@@ -455,8 +458,13 @@ struct MainView: View {
         return NSImage(contentsOf: engine.store.thumbnailsDirectory.appendingPathComponent(name))
     }
 
-    /// When this removes the last event from a photo, offers to delete the photo too.
+    /// Every delete asks first.
     private func delete(_ ids: [UUID]) {
+        pendingDelete = ids
+    }
+
+    /// When this removes the last event from a photo, offers to delete the photo too.
+    private func performDelete(_ ids: [UUID]) {
         if let selection, ids.contains(selection) { self.selection = nil }
         let flyers = engine.flyersOnlyUsedBy(ids)
         engine.delete(ids)

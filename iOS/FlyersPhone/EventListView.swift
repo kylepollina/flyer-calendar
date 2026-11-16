@@ -33,6 +33,7 @@ struct EventListView: View {
         }
         .sheet(isPresented: $isShowingSettings) { PhoneSettingsView(model: model, engine: engine) }
         .fullScreenCover(isPresented: $model.isShowingSetup, onDismiss: model.setupClosed) { PhoneSetupView(model: model, engine: engine) }
+        .confirmingDelete($model.pendingDelete, engine: engine, perform: model.delete)
         .photoDeletePrompt(model: model, engine: engine)
         .sensoryFeedback(.success, trigger: engine.lastDeletedIDs) { _, new in !new.isEmpty }
     }
@@ -133,7 +134,7 @@ struct EventListView: View {
             EventRow(event: event, day: day, thumbnail: model.thumbnail(engine.flyer(id: event.flyerID)))
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) { model.delete([event.id]) } label: { Label("Delete", systemImage: "trash") }
+            Button(role: .destructive) { model.requestDelete([event.id]) } label: { Label("Delete", systemImage: "trash") }
         }
         .swipeActions(edge: .leading) {
             if event.state == .needsReview || event.state == .available {
@@ -145,7 +146,7 @@ struct EventListView: View {
             if event.state == .needsReview || event.state == .available {
                 Button("Add to Calendar", systemImage: "calendar.badge.plus") { engine.addToCalendar(event.id) }
             }
-            Button("Delete", systemImage: "trash", role: .destructive) { model.delete([event.id]) }
+            Button("Delete", systemImage: "trash", role: .destructive) { model.requestDelete([event.id]) }
         }
     }
 

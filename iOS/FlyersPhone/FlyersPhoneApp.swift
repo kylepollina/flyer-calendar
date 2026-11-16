@@ -99,6 +99,14 @@ final class PhoneModel: ObservableObject {
         return calendarReady && (!needsScanningSetup || (hasAPIKey && hasPhotoAccess))
     }
 
+    /// Events waiting for you to confirm deleting them. The event list asks.
+    @Published var pendingDelete: [UUID] = []
+
+    /// Every delete asks first.
+    func requestDelete(_ ids: [UUID]) {
+        pendingDelete = ids
+    }
+
     /// Deletes events, then offers to delete photos they were the last events from.
     func delete(_ ids: [UUID]) {
         let flyers = engine.flyersOnlyUsedBy(ids)
