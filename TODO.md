@@ -73,12 +73,14 @@ devices and a fake cloud in `SyncTests.swift`. `CloudSync.swift` carries the rec
 - [x] Match photos across devices by iCloud Photos' cloud ID, and claim photos before reading them.
 - [x] Only the device that found an event adds it to Calendar and reads Calendar's changes back. Other devices find it by its cross-device ID to edit or delete it.
 - [x] Only remove an original from Photos once its flyer has reached iCloud.
-- [x] `CloudSync`: carry the records through CloudKit with `CKSyncEngine`. Builds, but hasn't run yet.
-- [ ] Register the App ID and an iCloud container on the developer account, and add the iCloud entitlement to both apps.
-- [ ] Switch `CloudSync` on in both apps, and show sync status and errors in Settings.
-- [ ] Try it for real with the Mac and an iPhone.
+- [x] `CloudSync`: carry the records through CloudKit with `CKSyncEngine`.
+- [x] Register the iCloud container `iCloud.app.flyers.Flyers` and add the iCloud entitlement to both apps.
+- [x] Switch `CloudSync` on in both apps, and show sync status and errors in Settings. Builds that list `FlyersCloudContainer` in Info.plist sync.
+- [x] Create the schema in iCloud's Development environment (`Flyers --cloud-schema` from a Debug build sends demo data).
+- [ ] Deploy the schema to Production in the CloudKit Console, then try a Mac and an iPhone together.
+- [ ] Push notifications on the Mac. It fetches when it comes to the front and before each scan for now.
 - [ ] Sync spending, summed across devices, so the monthly limit covers both.
-- [ ] Add the Mac app to the Xcode project. iCloud needs a provisioning profile, which the `build-app.sh` build can't carry.
+- [x] Add the Mac app to the Xcode project (target `FlyersMac`). iCloud needs a provisioning profile, which the `build-app.sh` build can't carry, so that build doesn't sync.
 - [ ] Sync the API key with iCloud Keychain (`kSecAttrSynchronizable`) so the phone and Share extension can use it.
 - [ ] Turn scanning on the phone on by default once sync works.
 

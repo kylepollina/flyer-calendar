@@ -13,7 +13,7 @@ extension Image {
 
 extension Color {
     /// The plain background behind the app's pages.
-    static var appBackground: Color { Color.appBackground }
+    static var appBackground: Color { Color(nsColor: .windowBackgroundColor) }
 }
 #else
 import UIKit

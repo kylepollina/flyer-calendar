@@ -9,6 +9,9 @@ binary_dir="$(swift build -c release --show-bin-path)"
 app=build/Flyers.app
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp Resources/Info.plist "$app/Contents/Info.plist"
+# A plain codesign can't grant iCloud, and CloudKit stops an app without it, so this build doesn't
+# sync. The FlyersMac target in iOS/Flyers.xcodeproj builds the syncing app.
+/usr/libexec/PlistBuddy -c "Delete :FlyersCloudContainer" "$app/Contents/Info.plist"
 cp Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cp "$binary_dir/Flyers" "$app/Contents/MacOS/Flyers"
 # SwiftPM records the deployment target (macOS 15) as the SDK version, which makes AppKit run the

@@ -18,6 +18,7 @@ struct PhoneSettingsView: View {
                 calendarSection
                 scanningSection
                 photosSection
+                SyncSection(cloudSync: model.cloudSync)
                 keySection
                 Section("Spending") {
                     LabeledContent("This month", value: engine.spendThisMonth.formatted(.currency(code: "USD").precision(.fractionLength(2...4))))
@@ -79,7 +80,9 @@ struct PhoneSettingsView: View {
         } header: {
             Text("Scanning")
         } footer: {
-            Text("Leave this off while Flyers on your Mac is scanning. Until the two sync, each would read the same photos and add the same events to your calendar.")
+            Text(model.cloudSync == nil
+                ? "Leave this off while Flyers on your Mac is scanning. Until the two sync, each would read the same photos and add the same events to your calendar."
+                : "With sync on, your iPhone and Mac share what they've read, so each photo is read once, by whichever device gets to it first.")
         }
     }
 

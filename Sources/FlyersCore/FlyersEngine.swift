@@ -847,6 +847,16 @@ public final class FlyersEngine: ObservableObject {
         photos.localIDs(forCloud: Array(Set(cloudIDs)))
     }
 
+    /// Events from before sync have no owner, which every device would read as its own. The
+    /// device that already has them, when it starts syncing, makes them its own before sending.
+    public func claimUnownedEvents() {
+        guard document.events.contains(where: { $0.ownerDevice == nil }) else { return }
+        for index in document.events.indices where document.events[index].ownerDevice == nil {
+            document.events[index].ownerDevice = deviceID
+        }
+        persist()
+    }
+
     /// Whether this device adds the event to Calendar and watches Calendar for it.
     public func isOwnedHere(_ event: FlyerEvent) -> Bool {
         event.ownerDevice == nil || event.ownerDevice == deviceID

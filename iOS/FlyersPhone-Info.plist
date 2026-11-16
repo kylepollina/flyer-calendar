@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Sync starts only in builds that list a container, since those are signed for iCloud. -->
+    <key>FlyersCloudContainer</key>
+    <string>iCloud.app.flyers.Flyers</string>
+    <!-- CloudKit wakes the app with a silent push when another device changes something. -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>remote-notification</string>
+    </array>
+</dict>
+</plist>

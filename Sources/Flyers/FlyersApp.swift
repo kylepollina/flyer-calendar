@@ -86,6 +86,8 @@ final class AppModel: ObservableObject {
 
     let engine: FlyersEngine
     let calendarService: CalendarService
+    /// Sync with your other devices, in builds signed for iCloud.
+    let cloudSync: CloudSync?
     let isDemo: Bool
     /// `--demo-setup` shows first-run setup on top of the demo data.
     private let previewsSetup: Bool
@@ -101,36 +103,46 @@ final class AppModel: ObservableObject {
 
     private var scheduler: NSBackgroundActivityScheduler?
     private var calendarObserver: NSObjectProtocol?
+    private var activeObserver: NSObjectProtocol?
 
     init() {
         let previewSetup = CommandLine.arguments.contains("--demo-setup")
-        let demo = previewSetup || CommandLine.arguments.contains("--demo")
+        // Sends demo data to iCloud's development environment, which makes CloudKit create the
+        // record types. They then get deployed to production in the CloudKit Console.
+        let makesSchema = CommandLine.arguments.contains("--cloud-schema")
+        let demo = previewSetup || makesSchema || CommandLine.arguments.contains("--demo")
         isDemo = demo
         previewsSetup = previewSetup
         if demo {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("flyers-demo-\(UUID())", isDirectory: true)
             let store = DocumentStore(directory: directory)
             calendarService = CalendarService(calendarID: nil)
-            engine = FlyersEngine(
+            let engine = FlyersEngine(
                 store: store, photos: PhotoLibrary(), extractor: AnthropicClient(), calendar: DemoCalendar(),
-                apiKey: { nil }, document: DemoData.document(store: store)
+                apiKey: { nil }, document: DemoData.document(store: store, withPhotoRecord: makesSchema)
             )
+            self.engine = engine
             hasAPIKey = !previewSetup
             hasPhotoAccess = !previewSetup
             hasCalendarAccess = !previewSetup
+            let cloudSync = makesSchema ? CloudSync.containerIDFromInfo.map { CloudSync(engine: engine, containerID: $0) } : nil
+            self.cloudSync = cloudSync
+            if let cloudSync { Task { await cloudSync.pushNow() } }
             return
         }
         let store = DocumentStore(directory: DocumentStore.defaultDirectory)
         let document = store.load()
         let service = CalendarService(calendarID: document.settings.calendarID)
         calendarService = service
-        engine = FlyersEngine(
+        let engine = FlyersEngine(
             store: store, photos: PhotoLibrary(), extractor: AnthropicClient(), calendar: service,
             apiKey: { APIKeyStore.read() }, document: document
         )
+        self.engine = engine
         hasAPIKey = APIKeyStore.read() != nil
         hasPhotoAccess = PhotoLibrary.isAuthorized
         hasCalendarAccess = CalendarService.hasAccess
+        cloudSync = CloudSync.containerIDFromInfo.map { CloudSync(engine: engine, containerID: $0) }
         // Saves the scan start date, so photos taken before the first launch stay out of it.
         engine.updateSettings { _ in }
         startBackgroundWork()
@@ -164,6 +176,13 @@ final class AppModel: ObservableObject {
             forName: .EKEventStoreChanged, object: calendarService.store, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.engine.reconcileWithCalendar() }
+        }
+        // Without push notifications on the Mac, changes from your other devices arrive when
+        // Flyers comes to the front and before each scan.
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.cloudSync?.fetchNow() }
         }
         engine.reconcileWithCalendar()
         engine.addAppLinksIfNeeded()
@@ -254,8 +273,12 @@ final class AppModel: ObservableObject {
 
 enum DemoData {
     @MainActor
-    static func document(store: DocumentStore) -> AppDocument {
+    static func document(store: DocumentStore, withPhotoRecord: Bool = false) -> AppDocument {
         var document = AppDocument()
+        if withPhotoRecord {
+            // So CloudKit sees a photo record too when making the schema.
+            document.photos["schema"] = PhotoRecord(status: .extracted, attempts: 1, processedAt: Date(), cloudID: "schema-example")
+        }
         let today = Day.today
         let makeFlyer = { (title: String, footer: String, top: NSColor, bottom: NSColor) -> Flyer in
             let id = UUID()

@@ -234,6 +234,26 @@ private func device(
         #expect(phone.engine.document.events.first?.state == .onCalendar)
     }
 
+    @Test func eventsFromBeforeSyncBelongToTheDeviceThatHadThem() async throws {
+        let cloud = MemoryCloud(), calendar = SharedCalendar()
+        let mac = device("mac", cloud: cloud, calendar: calendar, image: image)
+        let phone = device("phone", cloud: cloud, calendar: calendar, photos: [], image: image)
+        (mac.engine.calendar as! DeviceCalendar).isReady = false
+        await mac.engine.scan()
+        // As saved before sync existed: no owner, which any device would read as its own.
+        for index in mac.engine.document.events.indices { mac.engine.document.events[index].ownerDevice = nil }
+
+        mac.engine.claimUnownedEvents()
+        await mac.sync.pushNow()
+        await phone.sync.fetchNow()
+        #expect(phone.engine.document.events.first?.ownerDevice == "mac")
+        phone.engine.flushQueue()
+        #expect(calendar.adds == 0)
+        (mac.engine.calendar as! DeviceCalendar).isReady = true
+        mac.engine.flushQueue()
+        #expect(calendar.adds == 1)
+    }
+
     @Test func addingOnTheOtherDeviceMakesItTheOwner() async throws {
         let cloud = MemoryCloud(), calendar = SharedCalendar()
         let mac = device("mac", cloud: cloud, calendar: calendar, image: image)

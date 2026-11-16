@@ -23,6 +23,8 @@ struct FlyersPhoneApp: App {
 final class PhoneModel: ObservableObject {
     let engine: FlyersEngine
     let calendarService: CalendarService
+    /// Sync with your other devices, in builds signed for iCloud.
+    let cloudSync: CloudSync?
     let isDemo: Bool
     @Published var hasAPIKey: Bool
     @Published var hasPhotoAccess: Bool
@@ -47,6 +49,7 @@ final class PhoneModel: ObservableObject {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("flyers-demo-\(UUID())", isDirectory: true)
             let store = DocumentStore(directory: directory)
             calendarService = CalendarService(calendarID: nil)
+            cloudSync = nil
             engine = FlyersEngine(
                 store: store, photos: PhotoLibrary(), extractor: AnthropicClient(), calendar: DemoCalendar(),
                 apiKey: { nil }, document: PhoneDemo.document(store: store)
@@ -63,10 +66,14 @@ final class PhoneModel: ObservableObject {
         let document = store.load()
         let service = CalendarService(calendarID: document.settings.calendarID)
         calendarService = service
-        engine = FlyersEngine(
+        let engine = FlyersEngine(
             store: store, photos: PhotoLibrary(), extractor: AnthropicClient(), calendar: service,
             apiKey: { APIKeyStore.read() }, document: document
         )
+        self.engine = engine
+        cloudSync = CloudSync.containerIDFromInfo.map { CloudSync(engine: engine, containerID: $0) }
+        // CloudKit tells the sync engine about changes from your other devices with a silent push.
+        if cloudSync != nil { UIApplication.shared.registerForRemoteNotifications() }
         hasAPIKey = APIKeyStore.read() != nil
         hasPhotoAccess = PhotoLibrary.isAuthorized
         hasCalendarAccess = CalendarService.hasAccess
@@ -111,7 +118,11 @@ final class PhoneModel: ObservableObject {
         hasPhotoAccess = PhotoLibrary.isAuthorized
         hasCalendarAccess = CalendarService.hasAccess
         engine.reconcileWithCalendar()
-        if canScan { await engine.scan(manual: false) }
+        if canScan {
+            await engine.scan(manual: false)
+        } else {
+            await cloudSync?.fetchNow()
+        }
     }
 
     func scanNow() async {

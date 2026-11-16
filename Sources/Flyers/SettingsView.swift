@@ -297,6 +297,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             photosSection
+            SyncSection(cloudSync: model.cloudSync)
             Section("General") {
                 Toggle("Start at login", isOn: Binding(
                     get: { model.launchesAtLogin },

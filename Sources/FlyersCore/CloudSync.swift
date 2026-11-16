@@ -1,4 +1,5 @@
 import CloudKit
+import Combine
 import Foundation
 
 /// Carries sync records through iCloud, in a zone of your private CloudKit database, with
@@ -7,12 +8,12 @@ import Foundation
 /// Needs the app to have the iCloud (CloudKit) entitlement for `containerID`. Without it, CloudKit
 /// stops the app, so this is only created once the app is signed for iCloud.
 @MainActor
-public final class CloudSync: SyncConnection {
+public final class CloudSync: ObservableObject, SyncConnection {
     public static let zoneName = "Flyers"
 
     /// The last problem, such as being signed out of iCloud, for Settings to show.
-    public private(set) var lastError: String?
-    public private(set) var lastSyncAt: Date?
+    @Published public private(set) var lastError: String?
+    @Published public private(set) var lastSyncAt: Date?
 
     private weak var engine: FlyersEngine?
     private var syncEngine: CKSyncEngine?
@@ -42,8 +43,26 @@ public final class CloudSync: SyncConnection {
         if saved == nil {
             syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
         }
+        engine.claimUnownedEvents()
         engine.sync = self
         changed()
+        Task { await checkAccount(containerID) }
+    }
+
+    /// Reads the container's ID from Info.plist, where only builds signed for iCloud list it.
+    /// Without the entitlement, CloudKit would stop the app.
+    public static var containerIDFromInfo: String? {
+        Bundle.main.object(forInfoDictionaryKey: "FlyersCloudContainer") as? String
+    }
+
+    private func checkAccount(_ containerID: String) async {
+        switch try? await CKContainer(identifier: containerID).accountStatus() {
+        case .available: break
+        case .noAccount: lastError = "Sign in to iCloud to sync with your other devices."
+        case .restricted: lastError = "iCloud is restricted on this device."
+        case .temporarilyUnavailable: lastError = "iCloud is unavailable right now."
+        default: lastError = "Couldn't check your iCloud account."
+        }
     }
 
     // MARK: SyncConnection
@@ -214,8 +233,9 @@ public final class CloudSync: SyncConnection {
         ) async -> CKSyncEngine.RecordZoneChangeBatch? {
             let changes = syncEngine.state.pendingRecordZoneChanges.filter { context.options.scope.contains($0) }
             guard !changes.isEmpty else { return nil }
-            return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: changes) { [weak self] id in
-                await MainActor.run { self?.owner?.ckRecord(for: id) }
+            let owner = owner
+            return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: changes) { id in
+                await MainActor.run { owner?.ckRecord(for: id) }
             }
         }
     }
