@@ -155,7 +155,8 @@ struct EventListView: View {
             note: event.state == .removedInCalendar ? "Removed in Calendar" : "Deleted in Flyers"
         )
         .opacity(0.6)
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+        // Swiping left shows Restore on the right, where Delete sits on other rows.
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button { engine.restore([event.id]) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
                 .tint(.blue)
         }
