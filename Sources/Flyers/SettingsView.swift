@@ -241,10 +241,6 @@ struct SettingsView: View {
                 } else {
                     Button("Allow access to Calendar") { Task { await model.requestCalendarAccess() } }
                 }
-                Picker("New events", selection: binding(\.addMode)) {
-                    Text("Add automatically").tag(AddMode.automatic)
-                    Text("Wait for my review").tag(AddMode.review)
-                }
                 Picker("Alert", selection: binding(\.alertMinutesBefore)) {
                     Text("None").tag(0)
                     Text("1 hour before").tag(60)
@@ -332,7 +328,6 @@ struct MenuBarView: View {
 
     var body: some View {
         let next = EventList.next(engine.document.events, today: .today, limit: 5)
-        let reviewCount = EventList.needingReview(engine.document.events).count
         VStack(alignment: .leading, spacing: 12) {
             if next.isEmpty {
                 Text("Nothing coming up")
@@ -348,14 +343,6 @@ struct MenuBarView: View {
                         .buttonStyle(.plain)
                     }
                 }
-            }
-            if reviewCount > 0 {
-                Button { openReview() } label: {
-                    Label(reviewCount == 1 ? "1 event to check" : "\(reviewCount) events to check", systemImage: "exclamationmark.circle.fill")
-                        .symbolRenderingMode(.multicolor)
-                        .font(.callout)
-                }
-                .buttonStyle(.plain)
             }
             if let message = engine.alertMessage {
                 Text(message).font(.caption).foregroundStyle(.orange)
@@ -415,9 +402,6 @@ struct MenuBarView: View {
         openMainWindow()
     }
 
-    private func openReview() {
-        if let first = EventList.needingReview(engine.document.events).first { open(first.id) }
-    }
 }
 
 /// An upcoming event with a small calendar page showing its date.

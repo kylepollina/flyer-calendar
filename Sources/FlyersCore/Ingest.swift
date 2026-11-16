@@ -53,12 +53,11 @@ public enum Ingest {
             )
             event.problems = problems(in: extracted, startDay: startDay)
 
-            if event.isOver(today: today) {
+            // Everything else goes straight to the calendar. Problems, and a reading the model was
+            // unsure of, show as a note on the event rather than holding it back.
+            // One with no date can't go on a calendar, so it waits for you to add a date.
+            if event.isOver(today: today) || startDay == nil {
                 event.state = .available
-            } else if result.confidence == .low || !event.problems.isEmpty {
-                event.state = .needsReview
-            } else if settings.addMode == .review {
-                event.state = .needsReview
             }
             output.append(event)
         }

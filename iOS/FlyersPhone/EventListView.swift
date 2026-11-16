@@ -4,7 +4,6 @@ import UIKit
 
 enum PhoneTab: String, Hashable {
     case upcoming = "Upcoming"
-    case review = "Review"
     case past = "Past"
     case map = "Map"
 }
@@ -18,15 +17,12 @@ struct EventListView: View {
     @State private var isShowingSettings = false
 
     private var today: Day { .today }
-    private var reviewCount: Int { EventList.needingReview(engine.document.events).count }
 
     /// Tabs along the bottom, where your thumb is. The map sits apart at the bottom right, the
     /// place iOS gives a tab that isn't one of the lists.
     var body: some View {
         TabView(selection: $tab) {
             Tab(PhoneTab.upcoming.rawValue, systemImage: "calendar", value: PhoneTab.upcoming) { stack(.upcoming) }
-            Tab(PhoneTab.review.rawValue, systemImage: "checkmark.circle", value: PhoneTab.review) { stack(.review) }
-                .badge(reviewCount)
             Tab(PhoneTab.past.rawValue, systemImage: "clock", value: PhoneTab.past) { stack(.past) }
             Tab(PhoneTab.map.rawValue, systemImage: "map", value: PhoneTab.map, role: .search) {
                 PhoneMapView(model: model, engine: engine)
@@ -78,19 +74,6 @@ struct EventListView: View {
                             ForEach(section.rows) { row(for: $0.event, day: $0.next) }
                         }
                     }
-                    bottomSpace
-                }
-            }
-        case .review:
-            let events = EventList.needingReview(engine.document.events)
-            if events.isEmpty {
-                ContentUnavailableView(
-                    "Nothing to check", systemImage: "checkmark.circle",
-                    description: Text("Events that need a second look wait here before reaching your calendar.")
-                )
-            } else {
-                List {
-                    ForEach(events) { row(for: $0, day: $0.startDay) }
                     bottomSpace
                 }
             }

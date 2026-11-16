@@ -817,7 +817,7 @@ public final class FlyersEngine: ObservableObject {
         let held = document.events.filter { $0.state == .available && $0.rrule != nil && $0.calendarItemID == nil }
         let counts = Dictionary(grouping: held, by: \.flyerID).mapValues(\.count)
         for event in held where (counts[event.flyerID] ?? 0) >= 3 && !event.isOver(today: today) {
-            change(event.id) { $0.state = document.settings.addMode == .review ? .needsReview : .queued }
+            change(event.id) { $0.state = .queued }
         }
         document.heldEventsAdded = true
         flushQueue()

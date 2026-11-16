@@ -51,10 +51,6 @@ struct PhoneSettingsView: View {
             } else {
                 Button("Allow Access to Calendar") { Task { await model.requestCalendarAccess() } }
             }
-            Picker("New events", selection: binding(\.addMode)) {
-                Text("Add automatically").tag(AddMode.automatic)
-                Text("Wait for my review").tag(AddMode.review)
-            }
             Picker("Alert", selection: binding(\.alertMinutesBefore)) {
                 Text("None").tag(0)
                 Text("1 hour before").tag(60)

@@ -484,18 +484,38 @@ struct PhoneEditEventView: View {
     }
 }
 
-/// Every event read from one photo, to look through or clear out together.
+/// Every event read from one photo, under the photo itself. Swipe one to delete it.
 struct PhotoEventsView: View {
     @ObservedObject var model: PhoneModel
     @ObservedObject var engine: FlyersEngine
     let flyerID: UUID
     /// The event you came from.
     let currentID: UUID
-    @State private var isConfirmingDeleteAll = false
+    @State private var isViewingPhoto = false
 
     var body: some View {
         let events = EventList.fromFlyer(flyerID, in: engine.document.events, today: .today)
+        let flyer = engine.flyer(id: flyerID)
+        let thumbnail = model.thumbnail(flyer)
         List {
+            if let thumbnail {
+                Button { isViewingPhoto = true } label: {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 220, maxHeight: 270)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.2))
+                        }
+                        .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("View the full photo")
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
             Section {
                 ForEach(events) { event in
                     NavigationLink(value: event.id) {
@@ -511,15 +531,13 @@ struct PhotoEventsView: View {
                     }
                 }
             } footer: {
-                Text("Swipe an event to delete it. Deleted events wait under Past, where you can restore them.")
-            }
-            if events.count > 1 {
-                Section {
-                    Button("Delete All \(events.count) Events", role: .destructive) { isConfirmingDeleteAll = true }
-                        .frame(maxWidth: .infinity)
+                if !events.isEmpty {
+                    Text("Swipe an event to delete it. Deleted events wait under Past, where you can restore them.")
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background { FlyerBackdrop(image: thumbnail) }
         .navigationTitle("From This Photo")
         .navigationBarTitleDisplayMode(.inline)
         .overlay {
@@ -527,15 +545,8 @@ struct PhotoEventsView: View {
                 ContentUnavailableView("No events left", systemImage: "photo", description: Text("Every event from this photo was deleted."))
             }
         }
-        .confirmationDialog(
-            "Delete all \(events.count) events from this photo?",
-            isPresented: $isConfirmingDeleteAll,
-            titleVisibility: .visible
-        ) {
-            Button("Delete \(events.count) Events", role: .destructive) { model.delete(events.map(\.id)) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("They also come off your calendar. You can restore them from Past.")
+        .fullScreenCover(isPresented: $isViewingPhoto) {
+            PhotoPager(sources: model.photoSources(flyer), placeholder: thumbnail) { isViewingPhoto = false }
         }
     }
 }

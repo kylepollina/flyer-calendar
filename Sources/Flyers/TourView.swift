@@ -85,12 +85,12 @@ struct TourView: View {
 
     private var reviewPage: some View {
         PageLayout(title: "You stay in charge",
-                   subtitle: "When a flyer is unclear, Flyers asks instead of guessing.") {
+                   subtitle: "When a flyer is unclear, Flyers says so on the event.") {
             MiniReview()
                 .padding(.bottom, 4)
                 .accessibilityHidden(true)
         } details: {
-            FeatureRow(symbol: "exclamationmark.circle", title: "Unclear events wait in Needs review", keys: ["⌘2"])
+            FeatureRow(symbol: "exclamationmark.circle", title: "Unclear events carry a note saying what to check")
             FeatureRow(symbol: "map", title: "See every event on a map, and everything one photo added")
             FeatureRow(symbol: "pencil", title: "Fix anything the flyer got wrong", keys: ["⌘E"])
         }
@@ -102,7 +102,7 @@ struct TourView: View {
             EmptyView()
         } details: {
             FeatureRow(symbol: "arrow.clockwise", title: "Scan for new photos now", keys: ["⌘R"])
-            FeatureRow(symbol: "list.bullet", title: "Upcoming, Needs review, Past", keys: ["⌘1–3"])
+            FeatureRow(symbol: "list.bullet", title: "Upcoming and Past", keys: ["⌘1", "⌘2"])
             FeatureRow(symbol: "pencil", title: "Edit an event", keys: ["⌘E"])
             FeatureRow(symbol: "trash", title: "Delete an event, with Undo", keys: ["⌫"])
             FeatureRow(symbol: "menubar.rectangle", title: "Next events, from the menu bar")
@@ -337,7 +337,7 @@ private struct StepIcon: View {
     }
 }
 
-/// An event waiting in Needs review, with the note that explains why.
+/// An event with a note that explains what to check.
 private struct MiniReview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

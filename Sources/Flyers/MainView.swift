@@ -5,9 +5,46 @@ import SwiftUI
 
 enum ListTab: String, CaseIterable, Identifiable {
     case upcoming = "Upcoming"
-    case review = "Needs review"
     case past = "Past"
     var id: String { rawValue }
+}
+
+/// Switches lists with a row of glass buttons, like the tab bar on iPhone. The chosen one sits
+/// in a lighter pill that slides between them.
+struct GlassTabs: View {
+    let items: [(tab: ListTab, symbol: String)]
+    @Binding var selection: ListTab
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.tab) { item in
+                let isSelected = item.tab == selection
+                Button { selection = item.tab } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: item.symbol).font(.system(size: 15, weight: .medium))
+                        Text(item.tab.rawValue).font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background {
+                        if isSelected {
+                            Capsule()
+                                .fill(.primary.opacity(0.1))
+                                .matchedGeometryEffect(id: "pill", in: pill)
+                        }
+                    }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .glassSurface(in: Capsule())
+        .animation(.snappy, value: selection)
+    }
 }
 
 struct MainView: View {
@@ -28,7 +65,6 @@ struct MainView: View {
     @State private var orphanedFlyers: [Flyer] = []
 
     private var today: Day { .today }
-    private var reviewCount: Int { EventList.needingReview(engine.document.events).count }
 
     var body: some View {
         Group {
@@ -120,10 +156,6 @@ struct MainView: View {
             selection = linkedSelection ?? firstRowID(in: tab)
             linkedSelection = nil
         }
-        .onChange(of: reviewCount) { old, new in
-            // Clearing the review list moves on to the next event, like working through an inbox.
-            if tab == .review && new < old && !model.isShowingSettings { selection = firstRowID(in: .review) }
-        }
         .onChange(of: selection) {
             if selection != nil {
                 photoEventsFlyerID = nil
@@ -189,7 +221,7 @@ struct MainView: View {
     private func reveal(_ id: UUID) {
         guard let event = engine.event(id: id) else { return }
         isShowingMap = false
-        let target: ListTab = event.state == .needsReview ? .review : event.isOver(today: today) ? .past : .upcoming
+        let target: ListTab = event.isOver(today: today) ? .past : .upcoming
         if target == tab {
             selection = event.id
         } else {
@@ -259,13 +291,10 @@ struct MainView: View {
     private var sidebar: some View {
         list
             .safeAreaInset(edge: .top, spacing: 0) {
-                Picker("View", selection: Binding(get: { tab }, set: showList)) {
-                    Text("Upcoming").tag(ListTab.upcoming)
-                    Text(reviewCount > 0 ? "Needs review \(reviewCount)" : "Needs review").tag(ListTab.review)
-                    Text("Past").tag(ListTab.past)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                GlassTabs(
+                    items: [(ListTab.upcoming, "calendar"), (ListTab.past, "clock")],
+                    selection: Binding(get: { tab }, set: showList)
+                )
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
             }
@@ -334,17 +363,6 @@ struct MainView: View {
                 .listStyle(.sidebar)
                 .onDeleteCommand(perform: deleteSelection)
             }
-        case .review:
-            let events = EventList.needingReview(engine.document.events)
-            if events.isEmpty {
-                EmptyList(symbol: "checkmark.circle", title: "Nothing to check", message: "Events that need a second look wait here before reaching your calendar.")
-            } else {
-                List(selection: $selection) {
-                    ForEach(events) { eventRow($0, day: $0.startDay) }
-                }
-                .listStyle(.sidebar)
-                .onDeleteCommand(perform: deleteSelection)
-            }
         case .past:
             let events = EventList.past(engine.document.events, today: today)
             let hidden = engine.hiddenEvents
@@ -378,8 +396,6 @@ struct MainView: View {
         switch tab {
         case .upcoming:
             return EventList.upcoming(engine.document.events, today: today).first?.rows.first?.id
-        case .review:
-            return EventList.needingReview(engine.document.events).first?.id
         case .past:
             return EventList.past(engine.document.events, today: today).first?.id
         }
@@ -492,6 +508,7 @@ struct MainView: View {
             PhotoEventsPage(
                 engine: engine, flyerID: flyerID, currentID: selection,
                 thumbnail: thumbnail(engine.flyer(id: flyerID)),
+                onViewPhoto: { viewPhoto(of: engine.flyer(id: flyerID)) },
                 onSelect: { id in
                     photoEventsFlyerID = nil
                     self.selection = id
@@ -1019,74 +1036,80 @@ struct DropTargetOverlay: View {
     }
 }
 
-/// Every event read from one photo, to look through or clear out together. Opened from an event's
-/// page, and shown in its place in the detail pane.
+/// Every event read from one photo, under the photo itself. Opened from an event's page, and shown in
+/// its place in the detail pane. Swipe an event, or Control-click it, to delete it.
 struct PhotoEventsPage: View {
     @ObservedObject var engine: FlyersEngine
     let flyerID: UUID
     /// The event the page was opened from, if it's still there.
     let currentID: UUID?
     let thumbnail: NSImage?
+    let onViewPhoto: () -> Void
     let onSelect: (UUID) -> Void
     let onBack: () -> Void
     let onDelete: ([UUID]) -> Void
-    @State private var isConfirmingDeleteAll = false
 
     var body: some View {
         let events = EventList.fromFlyer(flyerID, in: engine.document.events, today: .today)
-        DetailPage(thumbnail: thumbnail) {
-            Button(action: onBack) {
-                Label("Back", systemImage: "chevron.left")
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut("[", modifiers: .command)
-            Text("From This Photo").font(.largeTitle.bold())
-            if events.isEmpty {
-                Text("Every event from this photo was deleted. They wait under Past, where you can restore them.")
-                    .foregroundStyle(.secondary)
-            } else {
-                GlassCard {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
-                            if index > 0 { Divider().padding(.vertical, 8) }
-                            HStack(spacing: 10) {
-                                Button { onSelect(event.id) } label: {
-                                    HStack(spacing: 8) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(event.name).fontWeight(event.id == currentID ? .semibold : .regular)
-                                            Text(event.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(event, day: nil))
-                                                .font(.callout)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        Spacer(minLength: 8)
-                                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                    }
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .help("Open this event")
-                                Button(role: .destructive) { onDelete([event.id]) } label: {
-                                    Label("Delete", systemImage: "trash").labelStyle(.iconOnly).foregroundStyle(.red)
-                                }
-                                .buttonStyle(.borderless)
-                                .help("Delete this event. It waits under Past, where you can restore it.")
-                            }
-                        }
+        List {
+            VStack(alignment: .leading, spacing: 16) {
+                Button(action: onBack) { Label("Back", systemImage: "chevron.left") }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut("[", modifiers: .command)
+                HStack(alignment: .top, spacing: 20) {
+                    if let thumbnail {
+                        Button(action: onViewPhoto) { FlyerPoster(image: thumbnail) }
+                            .buttonStyle(.plain)
+                            .help("View the full photo")
+                            .accessibilityLabel("View the full photo")
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("From This Photo").font(.system(.title, weight: .bold))
+                        Text(events.isEmpty ? "Every event from this photo was deleted." : events.count == 1 ? "1 event" : "\(events.count) events")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                if events.count > 1 {
-                    Button("Delete All \(events.count) Events…", role: .destructive) { isConfirmingDeleteAll = true }
+            }
+            .padding(.vertical, 8)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+
+            if !events.isEmpty {
+                Section {
+                    ForEach(events) { event in
+                        Button { onSelect(event.id) } label: {
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(event.name).fontWeight(event.id == currentID ? .semibold : .regular)
+                                    Text(event.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(event, day: nil))
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button("Delete", systemImage: "trash", role: .destructive) { onDelete([event.id]) }
+                        }
+                        .contextMenu {
+                            Button("Delete", systemImage: "trash", role: .destructive) { onDelete([event.id]) }
+                        }
+                    }
+                } footer: {
+                    Text("Swipe left on an event, or Control-click it, to delete it. Deleted events wait under Past, where you can restore them.")
+                        .foregroundStyle(.secondary)
                 }
             }
         }
-        .confirmationDialog(
-            "Delete all \(events.count) events from this photo?",
-            isPresented: $isConfirmingDeleteAll
-        ) {
-            Button("Delete \(events.count) Events", role: .destructive) { onDelete(events.map(\.id)) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("They also come off your calendar. You can restore them from Past.")
-        }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: 680)
+        .frame(maxWidth: .infinity)
+        .background { FlyerBackdrop(image: thumbnail) }
     }
 }

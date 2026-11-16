@@ -28,13 +28,13 @@ private func makeEvent(
         #expect(sections.last?.rows.count == 1)
     }
 
-    @Test func hiddenAndReviewEventsArentUpcoming() {
+    @Test func hiddenEventsArentUpcomingButHeldOnesAre() {
         let sections = EventList.upcoming([
             makeEvent("Deleted", start: "2026-11-05", state: .deleted),
             makeEvent("Removed", start: "2026-11-05", state: .removedInCalendar),
             makeEvent("Check", start: "2026-11-05", state: .needsReview),
         ], today: today)
-        #expect(sections.isEmpty)
+        #expect(sections.flatMap(\.rows).map(\.event.name) == ["Check"])
     }
 
     @Test func everyEventFromOnePhotoIsListedSoonestFirst() {

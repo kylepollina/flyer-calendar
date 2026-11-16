@@ -16,7 +16,8 @@ public enum EventList {
     }
 
     public static func upcoming(_ events: [FlyerEvent], today: Day) -> [Section] {
-        let live = events.filter { !$0.isHidden && $0.state != .needsReview && !$0.isOver(today: today) }
+        // Events held for review by older versions show here too, with Add to Calendar.
+        let live = events.filter { !$0.isHidden && !$0.isOver(today: today) }
         var rows = live.map { Row(event: $0, next: $0.nextDay(onOrAfter: today)) }
         rows.sort(by: { sortKey($0) < sortKey($1) })
 
@@ -39,7 +40,7 @@ public enum EventList {
     }
 
     public static func past(_ events: [FlyerEvent], today: Day) -> [FlyerEvent] {
-        events.filter { !$0.isHidden && $0.state != .needsReview && $0.isOver(today: today) }
+        events.filter { !$0.isHidden && $0.isOver(today: today) }
             .sorted { ($0.startDay ?? today) > ($1.startDay ?? today) }
     }
 

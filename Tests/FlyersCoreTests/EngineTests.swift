@@ -704,11 +704,13 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(engine.event(id: id)?.fingerprint == original)
     }
 
-    @Test func approvingFromReviewAddsToTheCalendar() async {
+    @Test func anEventHeldByAnOlderVersionCanStillBeAdded() async {
         let calendar = FakeCalendar()
-        let (engine, _) = makeEngine(calendar: calendar, extractor: FakeExtractor { flyer() }) { $0.addMode = .review }
+        let (engine, _) = makeEngine(calendar: calendar, extractor: FakeExtractor { flyer() })
         await engine.scan()
         let id = engine.document.events[0].id
+        engine.removeFromCalendar(id)
+        engine.document.events[0].state = .needsReview
         #expect(calendar.items.isEmpty)
         engine.addToCalendar(id)
         #expect(calendar.items.count == 1)

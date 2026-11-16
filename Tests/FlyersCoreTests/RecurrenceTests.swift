@@ -73,24 +73,28 @@ private func day(_ iso: String) -> Day { Day(iso: iso)! }
         #expect(events.first?.state == .queued)
     }
 
-    @Test func reviewModeHoldsEvents() {
+    // Nothing is held for review any more. Problems travel with the event as a note.
+
+    @Test func theOldReviewSettingNoLongerHoldsEvents() {
         let events = run([ExtractedEvent(name: "Chess", startDate: "2026-04-26")], mode: .review)
-        #expect(events.first?.state == .needsReview)
+        #expect(events.first?.state == .queued)
     }
 
-    @Test func lowConfidenceGoesToReview() {
+    @Test func lowConfidenceStillGoesToTheCalendar() {
         let events = run([ExtractedEvent(name: "Chess", startDate: "2026-04-26")], confidence: .low)
-        #expect(events.first?.state == .needsReview)
+        #expect(events.first?.state == .queued)
     }
 
-    @Test func wrongPrintedWeekdayGoesToReview() {
+    @Test func aWrongPrintedWeekdayGoesToTheCalendarWithANote() {
         let events = run([ExtractedEvent(name: "Chess", dateAsPrinted: "Sat Apr 26", startDate: "2026-04-26")])
-        #expect(events.first?.state == .needsReview)
+        #expect(events.first?.state == .queued)
         #expect(events.first?.problems.first?.contains("Saturday") == true)
     }
 
-    @Test func missingDateGoesToReview() {
-        #expect(run([ExtractedEvent(name: "Chess")]).first?.state == .needsReview)
+    @Test func anEventWithNoDateWaitsOffTheCalendar() {
+        let event = run([ExtractedEvent(name: "Chess")]).first
+        #expect(event?.state == .available)
+        #expect(event?.problems.isEmpty == false)
     }
 
     @Test func eventsBeforeThePhotoAreDropped() {
@@ -117,21 +121,24 @@ private func day(_ iso: String) -> Day { Day(iso: iso)! }
         #expect(events.map(\.state) == [.queued, .queued, .queued, .queued])
     }
 
-    @Test func aRuleThatMissesTheStartGoesToReview() {
+    @Test func aRuleThatMissesTheStartIsNoted() {
         let events = run([ExtractedEvent(name: "Chess", startDate: "2026-04-22", rrule: "FREQ=WEEKLY;BYDAY=TU")])
-        #expect(events.first?.state == .needsReview)
+        #expect(events.first?.state == .queued)
+        #expect(events.first?.problems.isEmpty == false)
     }
 
-    @Test func anUnsupportedRuleGoesToReview() {
+    @Test func anUnsupportedRuleIsNoted() {
         let events = run([ExtractedEvent(name: "Chess", startDate: "2026-04-22", rrule: "FREQ=WEEKLY;BYHOUR=9")])
-        #expect(events.first?.state == .needsReview)
+        #expect(events.first?.state == .queued)
+        #expect(events.first?.problems.isEmpty == false)
     }
 
-    @Test func uncertainStartGoesToReview() {
+    @Test func anUncertainStartIsNoted() {
         let events = run([ExtractedEvent(
             name: "Run", startDate: "2026-04-19", rrule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=SU", startUncertain: true
         )])
-        #expect(events.first?.state == .needsReview)
+        #expect(events.first?.state == .queued)
+        #expect(events.first?.problems.isEmpty == false)
     }
 
     @Test func duplicatesAreSkippedHoweverTheyreWritten() {
