@@ -20,6 +20,8 @@ struct MainView: View {
     @State private var linkedSelection: UUID?
     @State private var linkMessage: String?
     @State private var isShowingMap = false
+    /// Shows every event from one photo in the detail pane, opened from an event's page.
+    @State private var photoEventsFlyerID: UUID?
     @State private var photoViewer: PhotoViewerItem?
     @State private var isDropTargeted = false
     /// Flyers left with no events after a delete, waiting for you to choose whether to delete their photos.
@@ -124,6 +126,7 @@ struct MainView: View {
         }
         .onChange(of: selection) {
             if selection != nil {
+                photoEventsFlyerID = nil
                 model.isShowingSettings = false
                 isShowingMap = false
             }
@@ -485,11 +488,22 @@ struct MainView: View {
             SettingsView(model: model, engine: engine)
         } else if isShowingMap {
             EventsMap(engine: engine, thumbnail: { thumbnail(engine.flyer(id: $0.flyerID)) }) { reveal($0) }
+        } else if let flyerID = photoEventsFlyerID {
+            PhotoEventsPage(
+                engine: engine, flyerID: flyerID, currentID: selection,
+                thumbnail: thumbnail(engine.flyer(id: flyerID)),
+                onSelect: { id in
+                    photoEventsFlyerID = nil
+                    self.selection = id
+                },
+                onBack: { photoEventsFlyerID = nil },
+                onDelete: delete
+            )
         } else if let selection, let event = engine.event(id: selection), !event.isHidden {
             EventDetail(
                 engine: engine, event: event, thumbnail: thumbnail(engine.flyer(id: event.flyerID)),
                 onViewPhoto: { viewPhoto(of: engine.flyer(id: event.flyerID)) },
-                onSelect: { self.selection = $0 },
+                onShowPhotoEvents: { photoEventsFlyerID = event.flyerID },
                 onDelete: delete
             )
             .id(event.id)
@@ -678,10 +692,9 @@ struct EventDetail: View {
     let event: FlyerEvent
     let thumbnail: NSImage?
     let onViewPhoto: () -> Void
-    let onSelect: (UUID) -> Void
+    let onShowPhotoEvents: () -> Void
     let onDelete: ([UUID]) -> Void
     @State private var isEditing = false
-    @State private var isConfirmingDeleteAll = false
 
     /// Every event that came from the same photo, this one included.
     private var fromSamePhoto: [FlyerEvent] {
@@ -712,15 +725,6 @@ struct EventDetail: View {
                 }
             }
             if fromSamePhoto.count > 1 { samePhotoCard }
-        }
-        .confirmationDialog(
-            "Delete all \(fromSamePhoto.count) events from this photo?",
-            isPresented: $isConfirmingDeleteAll
-        ) {
-            Button("Delete \(fromSamePhoto.count) Events", role: .destructive) { onDelete(fromSamePhoto.map(\.id)) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("They also come off your calendar. You can undo this right after.")
         }
         .sheet(isPresented: $isEditing) { EditEventSheet(engine: engine, event: event) }
         // Starts loading the original now, so it's ready when you open the photo.
@@ -862,38 +866,25 @@ struct EventDetail: View {
         }
     }
 
-    /// The other events read from this photo, so a flyer that added too much is quick to clear out.
+    /// The other events read from this photo, on a page of their own where you can manage them.
     private var samePhotoCard: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("\(fromSamePhoto.count) events from this photo").font(.headline)
-                    Spacer()
-                    Button("Delete All…", role: .destructive) { isConfirmingDeleteAll = true }
-                }
-                ForEach(fromSamePhoto) { other in
-                    Button { onSelect(other.id) } label: {
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(other.name).fontWeight(other.id == event.id ? .semibold : .regular)
-                                Text(other.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(other, day: nil))
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 8)
-                            if other.id == event.id {
-                                Text("This event").font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                            }
-                        }
-                        .contentShape(Rectangle())
+        Button(action: onShowPhotoEvents) {
+            GlassCard {
+                HStack(spacing: 12) {
+                    Image(systemName: "photo.stack").foregroundStyle(.secondary).frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(fromSamePhoto.count) events from this photo").font(.headline)
+                        Text(fromSamePhoto.filter { $0.id != event.id }.map(\.name).joined(separator: ", "))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(other.id == event.id)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                 }
+                .contentShape(Rectangle())
             }
         }
+        .buttonStyle(.plain)
     }
 
     private var photoCoordinate: CLLocationCoordinate2D? { flyer?.coordinate }
@@ -1025,5 +1016,77 @@ struct DropTargetOverlay: View {
                 .padding(8)
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// Every event read from one photo, to look through or clear out together. Opened from an event's
+/// page, and shown in its place in the detail pane.
+struct PhotoEventsPage: View {
+    @ObservedObject var engine: FlyersEngine
+    let flyerID: UUID
+    /// The event the page was opened from, if it's still there.
+    let currentID: UUID?
+    let thumbnail: NSImage?
+    let onSelect: (UUID) -> Void
+    let onBack: () -> Void
+    let onDelete: ([UUID]) -> Void
+    @State private var isConfirmingDeleteAll = false
+
+    var body: some View {
+        let events = EventList.fromFlyer(flyerID, in: engine.document.events, today: .today)
+        DetailPage(thumbnail: thumbnail) {
+            Button(action: onBack) {
+                Label("Back", systemImage: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("[", modifiers: .command)
+            Text("From This Photo").font(.largeTitle.bold())
+            if events.isEmpty {
+                Text("Every event from this photo was deleted. They wait under Past, where you can restore them.")
+                    .foregroundStyle(.secondary)
+            } else {
+                GlassCard {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
+                            if index > 0 { Divider().padding(.vertical, 8) }
+                            HStack(spacing: 10) {
+                                Button { onSelect(event.id) } label: {
+                                    HStack(spacing: 8) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(event.name).fontWeight(event.id == currentID ? .semibold : .regular)
+                                            Text(event.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(event, day: nil))
+                                                .font(.callout)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 8)
+                                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Open this event")
+                                Button(role: .destructive) { onDelete([event.id]) } label: {
+                                    Label("Delete", systemImage: "trash").labelStyle(.iconOnly).foregroundStyle(.red)
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Delete this event. It waits under Past, where you can restore it.")
+                            }
+                        }
+                    }
+                }
+                if events.count > 1 {
+                    Button("Delete All \(events.count) Events…", role: .destructive) { isConfirmingDeleteAll = true }
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete all \(events.count) events from this photo?",
+            isPresented: $isConfirmingDeleteAll
+        ) {
+            Button("Delete \(events.count) Events", role: .destructive) { onDelete(events.map(\.id)) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They also come off your calendar. You can restore them from Past.")
+        }
     }
 }
