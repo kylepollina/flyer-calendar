@@ -4,55 +4,74 @@ import MapKit
 import SwiftUI
 
 /// Upcoming events with a findable place, on a map with you on it. Each pin is the flyer's photo
-/// with the event's name under it. Events at the same place share a pin, and tapping it lists them.
+/// with the event's name under it. Pins that would overlap at the current zoom share one, which
+/// splits apart as you zoom in. Tapping a pin lists its events.
 struct PhoneMapView: View {
     @ObservedObject var model: PhoneModel
     @ObservedObject var engine: FlyersEngine
     /// Events opened from the map, which open within the map's tab.
     @State private var path: [UUID] = []
 
-    struct Pin: Identifiable {
+    /// One place, with every event there.
+    struct Place: Identifiable {
         var place: FoundPlace
-        /// Soonest first.
         var events: [FlyerEvent]
         var id: String { String(format: "%.5f,%.5f", place.latitude, place.longitude) }
     }
 
+    /// What's drawn: one place, or several close enough to overlap at this zoom.
+    struct Pin: Identifiable {
+        var places: [Place]
+        /// Soonest first.
+        var events: [FlyerEvent]
+        var id: String { places.map(\.id).joined(separator: "|") }
+        var coordinate: CLLocationCoordinate2D { places[0].place.coordinate }
+    }
+
+    /// Pins closer on screen than this share one, so a pin never hides another.
+    private static let groupingDistance: Double = 64
+
     @State private var places: [UUID: FoundPlace] = [:]
-    @State private var selectedPin: String?
+    /// The open pin, by the events in it, so it stays open while grouping changes.
+    @State private var selectedEvents: Set<UUID> = []
     @State private var isSearching = false
     @State private var position = MapCameraPosition.automatic
+    @State private var viewport: MapGrouping.Viewport?
+    @State private var mapSize = CGSize.zero
     /// Asks once to show where you are. Kept here so the request isn't dropped.
     @State private var locationManager = CLLocationManager()
     @Namespace private var mapScope
     /// Where you were looking, kept across opening an event, switching tabs and relaunching.
     @AppStorage("map.region") private var savedRegion = ""
-    @AppStorage(MapLook.pinStyleKey) private var pinStyle = MapLook.PinStyle.photo
-    @AppStorage(MapLook.labelKey) private var labelPosition = MapLook.LabelPosition.below
-    @AppStorage(MapLook.sizeKey) private var pinSize = MapLook.PinSize.medium
-    @AppStorage(MapLook.baseKey) private var base = MapLook.Base.standard
-    @AppStorage(MapLook.placesKey) private var showsPlaces = true
     private let today = Day.today
 
     private var located: [FlyerEvent] {
         engine.visibleEvents.filter { $0.location != nil && !$0.isOver(today: today) }
     }
 
-    private var pins: [Pin] {
-        var byPlace: [String: Pin] = [:]
+    private var placesWithEvents: [Place] {
+        var byPlace: [String: Place] = [:]
         for event in located {
-            guard let place = places[event.id] else { continue }
-            let empty = Pin(place: place, events: [])
-            var pin = byPlace[empty.id] ?? empty
-            pin.events.append(event)
-            byPlace[pin.id] = pin
+            guard let found = places[event.id] else { continue }
+            let empty = Place(place: found, events: [])
+            var place = byPlace[empty.id] ?? empty
+            place.events.append(event)
+            byPlace[place.id] = place
         }
-        return byPlace.values.map { pin in
-            var pin = pin
-            pin.events.sort { ($0.nextDay(onOrAfter: today) ?? today) < ($1.nextDay(onOrAfter: today) ?? today) }
-            return pin
+        return byPlace.values.sorted { $0.id < $1.id }
+    }
+
+    private var pins: [Pin] {
+        let all = placesWithEvents
+        let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        let points = all.map { MapGrouping.Point(id: $0.id, latitude: $0.place.latitude, longitude: $0.place.longitude) }
+        return MapGrouping.group(points, in: viewport, distance: Self.groupingDistance).map { ids in
+            let grouped = ids.compactMap { byID[$0] }
+            let events = grouped.flatMap(\.events).sorted {
+                ($0.nextDay(onOrAfter: today) ?? today) < ($1.nextDay(onOrAfter: today) ?? today)
+            }
+            return Pin(places: grouped, events: events)
         }
-        .sorted { $0.id < $1.id }
     }
 
     var body: some View {
@@ -60,38 +79,30 @@ struct PhoneMapView: View {
         NavigationStack(path: $path) {
             Map(position: $position, scope: mapScope) {
                 UserAnnotation()
-                if base == .off {
-                    // Covers the map's own drawing, leaving only your events and you.
-                    MapPolygon(coordinates: MapLook.wholeWorld).foregroundStyle(Color(uiColor: .systemBackground))
-                }
                 ForEach(pins) { pin in
-                    Annotation(title(of: pin), coordinate: pin.place.coordinate, anchor: .bottom) {
-                        MapPin(
-                            style: pinStyle, label: labelPosition, size: pinSize.points,
+                    Annotation(title(of: pin), coordinate: pin.coordinate, anchor: .bottom) {
+                        PhotoPin(
                             title: title(of: pin),
                             image: model.thumbnail(engine.flyer(id: pin.events[0].flyerID)),
                             count: pin.events.count,
-                            isSelected: selectedPin == pin.id
+                            isSelected: isSelected(pin)
                         ) {
-                            selectedPin = selectedPin == pin.id ? nil : pin.id
+                            selectedEvents = isSelected(pin) ? [] : Set(pin.events.map(\.id))
                         }
                     }
-                    // Pins draw their own names, so they can go above or below.
+                    // The pin draws its own name, under its point.
                     .annotationTitles(.hidden)
                 }
             }
-            .mapStyle(base.style(showsPlaces: showsPlaces))
             .mapControls { MapCompass() }
+            .onGeometryChange(for: CGSize.self, of: \.size) { mapSize = $0 }
             .onMapCameraChange(frequency: .onEnd) { context in
                 savedRegion = MapLook.encode(context.region)
-            }
-            .overlay(alignment: .topTrailing) {
-                MapLookMenu(
-                    pinStyle: $pinStyle, labelPosition: $labelPosition, pinSize: $pinSize,
-                    base: $base, showsPlaces: $showsPlaces
+                viewport = MapGrouping.Viewport(
+                    centerLatitude: context.region.center.latitude, centerLongitude: context.region.center.longitude,
+                    latitudeSpan: context.region.span.latitudeDelta, longitudeSpan: context.region.span.longitudeDelta,
+                    width: mapSize.width, height: mapSize.height
                 )
-                .padding(.trailing, 12)
-                .padding(.top, 8)
             }
             .overlay(alignment: .top) {
                 if isSearching {
@@ -117,7 +128,7 @@ struct PhoneMapView: View {
                         .controlSize(.large)
                         .tint(.primary)
                         .padding(.trailing, 16)
-                    if let pin = pins.first(where: { $0.id == selectedPin }) { pinCard(pin) }
+                    if let pin = pins.first(where: isSelected) { pinCard(pin) }
                 }
             }
             .mapScope(mapScope)
@@ -127,21 +138,30 @@ struct PhoneMapView: View {
                 EventDetailView(model: model, engine: engine, eventID: id)
             }
             // Fits every pin the first time, before you've looked anywhere yourself.
-            .onChange(of: pins.map(\.id), initial: true) {
-                guard savedRegion.isEmpty, let region = MKCoordinateRegion.fitting(pins.map(\.place.coordinate)) else { return }
+            .onChange(of: placesWithEvents.map(\.id), initial: true) {
+                guard savedRegion.isEmpty,
+                      let region = MKCoordinateRegion.fitting(placesWithEvents.map(\.place.coordinate)) else { return }
                 position = .region(region)
             }
             .task(id: located.map(\.id)) { await findPlaces() }
         }
     }
 
+    /// A pin is open when it holds the events last tapped, even if zooming regrouped them.
+    private func isSelected(_ pin: Pin) -> Bool {
+        !selectedEvents.isEmpty && !selectedEvents.isDisjoint(with: pin.events.map(\.id))
+    }
+
     private func title(of pin: Pin) -> String {
-        pin.events.count == 1 ? pin.events[0].name : (pin.place.name ?? "\(pin.events.count) events")
+        if pin.events.count == 1 { return pin.events[0].name }
+        if pin.places.count == 1, let name = pin.places[0].place.name { return name }
+        return "\(pin.events.count) events"
     }
 
     private func pinCard(_ pin: Pin) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let name = pin.place.name { Text(name).font(.headline) }
+            Text(pin.places.count == 1 ? (pin.places[0].place.name ?? title(of: pin)) : "\(pin.events.count) events nearby")
+                .font(.headline)
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(pin.events) { event in
@@ -191,70 +211,8 @@ struct PhoneMapView: View {
     }
 }
 
-/// Ways to draw the map and its pins, to try out from the map's debug menu. Saved on this iPhone.
+/// Saves the map's view as text, for `@AppStorage`.
 enum MapLook {
-    static let pinStyleKey = "map.pinStyle"
-    static let labelKey = "map.label"
-    static let sizeKey = "map.pinSize"
-    static let baseKey = "map.base"
-    static let placesKey = "map.places"
-
-    enum PinStyle: String, CaseIterable, Identifiable {
-        case photo, round, card, dot
-        var id: String { rawValue }
-        var name: String {
-            switch self {
-            case .photo: return "Square photo"
-            case .round: return "Round photo"
-            case .card: return "Photo card"
-            case .dot: return "Dot"
-            }
-        }
-    }
-
-    enum LabelPosition: String, CaseIterable, Identifiable {
-        case above, below, hidden
-        var id: String { rawValue }
-        var name: String { rawValue.capitalized }
-    }
-
-    enum PinSize: String, CaseIterable, Identifiable {
-        case small, medium, large
-        var id: String { rawValue }
-        var name: String { rawValue.capitalized }
-        var points: CGFloat {
-            switch self {
-            case .small: return 42
-            case .medium: return 58
-            case .large: return 80
-            }
-        }
-    }
-
-    enum Base: String, CaseIterable, Identifiable {
-        case standard, muted, satellite, hybrid, off
-        var id: String { rawValue }
-        var name: String { self == .off ? "Off" : rawValue.capitalized }
-
-        func style(showsPlaces: Bool) -> MapStyle {
-            let places: PointOfInterestCategories = showsPlaces ? .all : .excludingAll
-            switch self {
-            case .standard, .off: return .standard(pointsOfInterest: places)
-            case .muted: return .standard(emphasis: .muted, pointsOfInterest: places)
-            case .satellite: return .imagery
-            case .hybrid: return .hybrid(pointsOfInterest: places)
-            }
-        }
-    }
-
-    /// Nearly the whole globe, for hiding the map under the pins.
-    static let wholeWorld = [
-        CLLocationCoordinate2D(latitude: -85, longitude: -179.9),
-        CLLocationCoordinate2D(latitude: 85, longitude: -179.9),
-        CLLocationCoordinate2D(latitude: 85, longitude: 179.9),
-        CLLocationCoordinate2D(latitude: -85, longitude: 179.9),
-    ]
-
     static func encode(_ region: MKCoordinateRegion) -> String {
         [region.center.latitude, region.center.longitude, region.span.latitudeDelta, region.span.longitudeDelta]
             .map { String($0) }.joined(separator: ",")
@@ -270,124 +228,41 @@ enum MapLook {
     }
 }
 
-/// The ladybug in the map's corner: try different pins, names and maps.
-private struct MapLookMenu: View {
-    @Binding var pinStyle: MapLook.PinStyle
-    @Binding var labelPosition: MapLook.LabelPosition
-    @Binding var pinSize: MapLook.PinSize
-    @Binding var base: MapLook.Base
-    @Binding var showsPlaces: Bool
-
-    var body: some View {
-        Menu {
-            Picker("Pins", selection: $pinStyle) {
-                ForEach(MapLook.PinStyle.allCases) { Text($0.name).tag($0) }
-            }
-            .pickerStyle(.menu)
-            Picker("Names", selection: $labelPosition) {
-                ForEach(MapLook.LabelPosition.allCases) { Text($0.name).tag($0) }
-            }
-            .pickerStyle(.menu)
-            Picker("Size", selection: $pinSize) {
-                ForEach(MapLook.PinSize.allCases) { Text($0.name).tag($0) }
-            }
-            .pickerStyle(.menu)
-            Picker("Map", selection: $base) {
-                ForEach(MapLook.Base.allCases) { Text($0.name).tag($0) }
-            }
-            .pickerStyle(.menu)
-            Toggle("Places on the Map", isOn: $showsPlaces)
-            Divider()
-            Button("Reset", systemImage: "arrow.counterclockwise") {
-                pinStyle = .photo
-                labelPosition = .below
-                pinSize = .medium
-                base = .standard
-                showsPlaces = true
-            }
-        } label: {
-            Label("Map Options", systemImage: "ladybug").labelStyle(.iconOnly)
-        }
-        .glassButton()
-        .buttonBorderShape(.circle)
-        .controlSize(.large)
-    }
-}
-
-/// One pin on the map, drawn the way the debug menu says. Names hang above or below without
-/// changing the pin's size, so the point under it stays on the place.
-private struct MapPin: View {
-    let style: MapLook.PinStyle
-    let label: MapLook.LabelPosition
-    let size: CGFloat
+/// A pin made of the flyer's photo, cropped square, with a point under it marking the spot and
+/// the name under that. The name hangs below without changing the pin's size, so the point stays
+/// on the place. A number in the corner counts the events it holds.
+private struct PhotoPin: View {
     let title: String
     let image: UIImage?
     let count: Int
     let isSelected: Bool
     let action: () -> Void
 
+    private let size: CGFloat = 58
+
     var body: some View {
         Button(action: action) {
-            pin
-                .overlay(alignment: .bottom) {
-                    if label == .below && style != .card { name.alignmentGuide(.bottom) { $0[.top] - 4 } }
-                }
-                .overlay(alignment: .top) {
-                    if label == .above && style != .card { name.alignmentGuide(.top) { $0[.bottom] + 4 } }
-                }
-                .scaleEffect(isSelected ? 1.2 : 1, anchor: .bottom)
-                .animation(.snappy, value: isSelected)
+            VStack(spacing: 0) {
+                photo
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white, lineWidth: 3) }
+                    .overlay(alignment: .topTrailing) { countBadge }
+                Image(systemName: "triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white)
+                    .rotationEffect(.degrees(180))
+                    .offset(y: -3)
+            }
+            .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+            .overlay(alignment: .bottom) {
+                name.alignmentGuide(.bottom) { $0[.top] - 2 }
+            }
+            .scaleEffect(isSelected ? 1.2 : 1, anchor: .bottom)
+            .animation(.snappy, value: isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(count == 1 ? title : "\(title), \(count) events")
-    }
-
-    @ViewBuilder private var pin: some View {
-        switch style {
-        case .photo:
-            VStack(spacing: 0) {
-                photo
-                    .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: size / 4, style: .continuous))
-                    .overlay { RoundedRectangle(cornerRadius: size / 4, style: .continuous).strokeBorder(.white, lineWidth: 3) }
-                    .overlay(alignment: .topTrailing) { countBadge }
-                pointer
-            }
-            .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-        case .round:
-            VStack(spacing: 0) {
-                photo
-                    .frame(width: size, height: size)
-                    .clipShape(Circle())
-                    .overlay { Circle().strokeBorder(.white, lineWidth: 3) }
-                    .overlay(alignment: .topTrailing) { countBadge }
-                pointer
-            }
-            .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-        case .card:
-            VStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    photo.frame(width: size * 1.6, height: size * 1.1).clipped()
-                    if label != .hidden {
-                        Text(title)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.center)
-                            .frame(width: size * 1.6 - 8)
-                            .padding(.vertical, 4)
-                    }
-                }
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white, lineWidth: 2) }
-                .overlay(alignment: .topTrailing) { countBadge }
-                pointer
-            }
-            .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-        case .dot:
-            PinBadge(count: count, isUpcoming: true, isSelected: false, action: action)
-                .scaleEffect(size / 46)
-        }
     }
 
     @ViewBuilder private var photo: some View {
@@ -395,20 +270,11 @@ private struct MapPin: View {
             Image(uiImage: image).resizable().scaledToFill()
         } else {
             Image(systemName: "calendar")
-                .font(.system(size: size * 0.4, weight: .semibold))
+                .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.accentColor)
         }
-    }
-
-    /// A small point under the pin, so it reads as marking a spot.
-    private var pointer: some View {
-        Image(systemName: "triangle.fill")
-            .font(.system(size: 10))
-            .foregroundStyle(.white)
-            .rotationEffect(.degrees(180))
-            .offset(y: -2)
     }
 
     @ViewBuilder private var countBadge: some View {
@@ -424,15 +290,17 @@ private struct MapPin: View {
         }
     }
 
+    /// Plain text, like the map's own labels: a soft outline in the map's background color keeps
+    /// it readable over streets and parks without a box behind it.
     private var name: some View {
         Text(title)
-            .font(.caption2.weight(.semibold))
+            .font(.caption.weight(.semibold))
             .lineLimit(2)
             .multilineTextAlignment(.center)
-            .frame(maxWidth: 120)
+            .frame(width: 130)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .shadow(color: Color(uiColor: .systemBackground), radius: 1)
+            .shadow(color: Color(uiColor: .systemBackground), radius: 1)
+            .shadow(color: Color(uiColor: .systemBackground), radius: 2)
     }
 }
