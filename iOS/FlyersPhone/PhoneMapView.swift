@@ -42,7 +42,8 @@ struct PhoneMapView: View {
     @State private var mapSize = CGSize.zero
     /// Asks once to show where you are. Kept here so the request isn't dropped.
     @State private var locationManager = CLLocationManager()
-    @Namespace private var mapScope
+    /// Where you are, kept current while the map is open.
+    @State private var userLocation: CLLocation?
     /// Where you were looking, kept across opening an event, switching tabs and relaunching.
     @AppStorage("map.region") private var savedRegion = ""
     private let today = Day.today
@@ -79,8 +80,13 @@ struct PhoneMapView: View {
     var body: some View {
         let pins = pins
         NavigationStack(path: $path) {
-            Map(position: $position, scope: mapScope) {
-                UserAnnotation()
+            Map(position: $position) {
+                // How sure the phone is of where you are, as a soft blue circle under everything.
+                if let userLocation, userLocation.horizontalAccuracy > 0 {
+                    MapCircle(center: userLocation.coordinate, radius: userLocation.horizontalAccuracy)
+                        .foregroundStyle(.blue.opacity(0.12))
+                        .stroke(.blue.opacity(0.3), lineWidth: 1)
+                }
                 ForEach(pins) { pin in
                     Annotation(title(of: pin), coordinate: pin.coordinate, anchor: .bottom) {
                         PhotoPin(
@@ -95,6 +101,11 @@ struct PhoneMapView: View {
                     }
                     // The pin draws its own name, under its point.
                     .annotationTitles(.hidden)
+                }
+                // Drawn after the pins, so you're never hidden under one.
+                if let userLocation {
+                    Annotation("My Location", coordinate: userLocation.coordinate) { YouAreHere() }
+                        .annotationTitles(.hidden)
                 }
             }
             .mapControls { MapCompass() }
@@ -132,19 +143,29 @@ struct PhoneMapView: View {
                 // Back from an event, or another tab, the map is where you left it.
                 if let region = MapLook.decode(savedRegion) { position = .region(region) }
             }
-            // The location button sits just above the Map button in the tab bar, where your thumb
-            // already is, with an open pin's card under it.
+            .task {
+                // Follows you while the map is open, and stops when you leave it.
+                do {
+                    for try await update in CLLocationUpdate.liveUpdates() {
+                        if let location = update.location { userLocation = location }
+                    }
+                } catch {}
+            }
+            // The location button sits at the right edge just above the Map button in the tab bar,
+            // where your thumb already is, with an open pin's card under it.
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .trailing, spacing: 10) {
-                    MapUserLocationButton(scope: mapScope)
-                        .buttonBorderShape(.circle)
-                        .controlSize(.large)
-                        .tint(.primary)
-                        .padding(.trailing, 16)
+                    Button(action: centerOnYou) {
+                        Label("Show My Location", systemImage: "location.fill").labelStyle(.iconOnly)
+                    }
+                    .glassButton()
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .padding(.trailing, 16)
                     if let pin = pins.first(where: isSelected) { pinCard(pin) }
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .mapScope(mapScope)
             .navigationTitle("Map")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: UUID.self) { id in
@@ -157,6 +178,19 @@ struct PhoneMapView: View {
                 position = .region(region)
             }
             .task(id: located.map(\.id)) { await findPlaces() }
+        }
+    }
+
+    /// Moves the map to you, keeping the zoom, without following you around afterwards.
+    private func centerOnYou() {
+        guard let userLocation else {
+            if locationManager.authorizationStatus == .notDetermined { locationManager.requestWhenInUseAuthorization() }
+            return
+        }
+        let span = viewport.map { MKCoordinateSpan(latitudeDelta: $0.latitudeSpan, longitudeDelta: $0.longitudeSpan) }
+            ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        withAnimation(.snappy) {
+            position = .region(MKCoordinateRegion(center: userLocation.coordinate, span: span))
         }
     }
 
@@ -315,5 +349,30 @@ private struct PhotoPin: View {
             .shadow(color: Color(uiColor: .systemBackground), radius: 1)
             .shadow(color: Color(uiColor: .systemBackground), radius: 1)
             .shadow(color: Color(uiColor: .systemBackground), radius: 2)
+    }
+}
+
+/// You on the map: a blue dot with a white ring and a soft glow, like Maps and Find My.
+private struct YouAreHere: View {
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.blue.opacity(0.25))
+                .frame(width: 44, height: 44)
+                .scaleEffect(isPulsing ? 1 : 0.5)
+                .opacity(isPulsing ? 0 : 1)
+            Circle()
+                .fill(.blue)
+                .frame(width: 18, height: 18)
+                .overlay { Circle().strokeBorder(.white, lineWidth: 3) }
+                .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 2).repeatForever(autoreverses: false)) { isPulsing = true }
+        }
+        .allowsHitTesting(false)
+        .accessibilityLabel("My location")
     }
 }
