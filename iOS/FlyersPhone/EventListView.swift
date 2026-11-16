@@ -21,7 +21,10 @@ struct EventListView: View {
     /// Tabs along the bottom, where your thumb is. The map sits apart at the bottom right, the
     /// place iOS gives a tab that isn't one of the lists.
     var body: some View {
-        TabView(selection: $tab) {
+        // Tapping Map while on the map goes back to Upcoming, so the map button works as a toggle.
+        TabView(selection: Binding(get: { tab }, set: { new in
+            tab = new == .map && tab == .map ? .upcoming : new
+        })) {
             Tab(PhoneTab.upcoming.rawValue, systemImage: "calendar", value: PhoneTab.upcoming) { stack(.upcoming) }
             Tab(PhoneTab.past.rawValue, systemImage: "clock", value: PhoneTab.past) { stack(.past) }
             Tab(PhoneTab.map.rawValue, systemImage: "map", value: PhoneTab.map, role: .search) {
