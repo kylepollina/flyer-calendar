@@ -2,41 +2,56 @@ import FlyersCore
 import SwiftUI
 import UIKit
 
-enum PhoneTab: String, CaseIterable, Identifiable {
+enum PhoneTab: String, Hashable {
     case upcoming = "Upcoming"
     case review = "Review"
     case past = "Past"
-    case deleted = "Deleted"
-    var id: String { rawValue }
+    case map = "Map"
 }
 
 struct EventListView: View {
     @ObservedObject var model: PhoneModel
     @ObservedObject var engine: FlyersEngine
     @State private var tab = PhoneTab.upcoming
-    @State private var path: [UUID] = []
+    /// Each tab keeps its own place, as tab bars do.
+    @State private var paths: [PhoneTab: [UUID]] = [:]
     @State private var isShowingSettings = false
-    @State private var isShowingMap = false
 
     private var today: Day { .today }
     private var reviewCount: Int { EventList.needingReview(engine.document.events).count }
 
+    /// Tabs along the bottom, where your thumb is. The map sits apart at the bottom right, the
+    /// place iOS gives a tab that isn't one of the lists.
     var body: some View {
-        NavigationStack(path: $path) {
-            list
-                .navigationTitle("Flyers")
+        TabView(selection: $tab) {
+            Tab(PhoneTab.upcoming.rawValue, systemImage: "calendar", value: PhoneTab.upcoming) { stack(.upcoming) }
+            Tab(PhoneTab.review.rawValue, systemImage: "checkmark.circle", value: PhoneTab.review) { stack(.review) }
+                .badge(reviewCount)
+            Tab(PhoneTab.past.rawValue, systemImage: "clock", value: PhoneTab.past) { stack(.past) }
+            Tab(PhoneTab.map.rawValue, systemImage: "map", value: PhoneTab.map, role: .search) {
+                PhoneMapView(model: model, engine: engine)
+            }
+        }
+        .sheet(isPresented: $isShowingSettings) { PhoneSettingsView(model: model, engine: engine) }
+        .fullScreenCover(isPresented: $model.isShowingSetup, onDismiss: model.setupClosed) { PhoneSetupView(model: model, engine: engine) }
+        .photoDeletePrompt(model: model, engine: engine)
+        .sensoryFeedback(.success, trigger: engine.lastDeletedIDs) { _, new in !new.isEmpty }
+    }
+
+    private func stack(_ tab: PhoneTab) -> some View {
+        NavigationStack(path: Binding(get: { paths[tab] ?? [] }, set: { paths[tab] = $0 })) {
+            list(tab)
+                .navigationTitle(tab.rawValue)
                 .navigationDestination(for: UUID.self) { id in
                     EventDetailView(model: model, engine: engine, eventID: id)
                 }
-                .safeAreaInset(edge: .top, spacing: 0) { tabs }
                 .overlay(alignment: .bottom) { notices }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { isShowingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
                     }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button { isShowingMap = true } label: { Label("Map", systemImage: "map") }
-                        if model.canScan {
+                    if model.canScan {
+                        ToolbarItem(placement: .topBarTrailing) {
                             Button { Task { await model.scanNow() } } label: {
                                 Label("Scan now", systemImage: "arrow.clockwise")
                             }
@@ -45,34 +60,11 @@ struct EventListView: View {
                     }
                 }
                 .refreshable { await model.scanNow() }
-                .sheet(isPresented: $isShowingSettings) { PhoneSettingsView(model: model, engine: engine) }
-                .sheet(isPresented: $isShowingMap) {
-                    PhoneMapView(model: model, engine: engine) { id in
-                        isShowingMap = false
-                        path = [id]
-                    }
-                }
-                .fullScreenCover(isPresented: $model.isShowingSetup, onDismiss: model.setupClosed) { PhoneSetupView(model: model, engine: engine) }
-                .photoDeletePrompt(model: model, engine: engine)
-                .sensoryFeedback(.success, trigger: engine.lastDeletedIDs) { _, new in !new.isEmpty }
                 .animation(.snappy, value: noticeKey)
         }
     }
 
-    /// Floats over the list, so it reads as part of the glass toolbar rather than a bar of its own.
-    private var tabs: some View {
-        Picker("View", selection: $tab) {
-            Text("Upcoming").tag(PhoneTab.upcoming)
-            Text(reviewCount > 0 ? "Review \(reviewCount)" : "Review").tag(PhoneTab.review)
-            Text("Past").tag(PhoneTab.past)
-            Text("Deleted").tag(PhoneTab.deleted)
-        }
-        .pickerStyle(.segmented)
-        .padding(.horizontal)
-        .padding(.vertical, 6)
-    }
-
-    @ViewBuilder private var list: some View {
+    @ViewBuilder private func list(_ tab: PhoneTab) -> some View {
         switch tab {
         case .upcoming:
             let sections = EventList.upcoming(engine.document.events, today: today)
@@ -104,41 +96,36 @@ struct EventListView: View {
             }
         case .past:
             let events = EventList.past(engine.document.events, today: today)
-            if events.isEmpty {
+            let hidden = engine.hiddenEvents
+            if events.isEmpty && hidden.isEmpty {
                 ContentUnavailableView(
                     "No past events", systemImage: "clock", description: Text("Events move here once they've finished.")
                 )
             } else {
                 List {
-                    Section { ForEach(events) { row(for: $0, day: $0.startDay) } }
-                    bottomSpace
-                }
-            }
-        case .deleted:
-            let hidden = engine.hiddenEvents
-            if hidden.isEmpty {
-                ContentUnavailableView(
-                    "Nothing deleted", systemImage: "trash",
-                    description: Text("Events you delete, here or in Calendar, wait here in case you want them back.")
-                )
-            } else {
-                List {
-                    Section {
-                        ForEach(hidden) { hiddenRow($0) }
-                    } header: {
-                        HStack {
-                            Text("\(hidden.count) deleted")
-                            Spacer()
-                            Button("Restore All") { engine.restore(hidden.map(\.id)) }
-                                .font(.subheadline)
-                                .textCase(nil)
+                    if !events.isEmpty {
+                        Section { ForEach(events) { row(for: $0, day: $0.startDay) } }
+                    }
+                    if !hidden.isEmpty {
+                        Section {
+                            ForEach(hidden) { hiddenRow($0) }
+                        } header: {
+                            HStack {
+                                Text("Deleted")
+                                Spacer()
+                                Button("Restore All") { engine.restore(hidden.map(\.id)) }
+                                    .font(.subheadline)
+                                    .textCase(nil)
+                            }
+                        } footer: {
+                            Text("Deleted events stay here, so a rescan can't bring them back. Swipe one to restore it.")
                         }
-                    } footer: {
-                        Text("Deleted events stay here, so a rescan can't bring them back. Swipe one to restore it.")
                     }
                     bottomSpace
                 }
             }
+        case .map:
+            EmptyView()
         }
     }
 

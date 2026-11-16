@@ -7,8 +7,8 @@ import SwiftUI
 struct PhoneMapView: View {
     @ObservedObject var model: PhoneModel
     @ObservedObject var engine: FlyersEngine
-    let onOpen: (UUID) -> Void
-    @Environment(\.dismiss) private var dismiss
+    /// Events opened from the map, which open within the map's tab.
+    @State private var path: [UUID] = []
 
     enum Show: String, CaseIterable, Identifiable {
         case all = "All", upcoming = "Upcoming", past = "Past"
@@ -50,7 +50,7 @@ struct PhoneMapView: View {
 
     var body: some View {
         let pins = pins
-        NavigationStack {
+        NavigationStack(path: $path) {
             Map(position: $position) {
                 ForEach(pins) { pin in
                     Annotation(
@@ -82,8 +82,8 @@ struct PhoneMapView: View {
             }
             .navigationTitle("Map")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            .navigationDestination(for: UUID.self) { id in
+                EventDetailView(model: model, engine: engine, eventID: id)
             }
             .onChange(of: show) { selectedPin = nil }
             // Reframes when the set of places changes, not on every redraw, so it never fights your panning.
@@ -100,7 +100,7 @@ struct PhoneMapView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(pin.events.sorted { ($0.startDay?.number ?? 0) > ($1.startDay?.number ?? 0) }) { event in
-                        Button { onOpen(event.id) } label: {
+                        Button { path.append(event.id) } label: {
                             EventRow(
                                 event: event, day: event.nextDay(onOrAfter: today),
                                 thumbnail: model.thumbnail(engine.flyer(id: event.flyerID))
