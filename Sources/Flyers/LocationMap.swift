@@ -159,47 +159,54 @@ extension Flyer {
     }
 }
 
-/// A map of the event's place, with buttons for directions in Apple Maps or Google Maps.
-/// Shows nothing when the place can't be found, so the printed location stands alone.
+/// A still map of the event's place. Tapping it offers to open the place in Apple Maps or Google Maps,
+/// where you can get directions. Shows nothing when the place can't be found, so the printed
+/// location stands alone.
 struct LocationMap: View {
     let location: String
     let near: CLLocationCoordinate2D?
     @State private var place: FoundPlace?
     @State private var searched = false
+    @State private var isChoosingApp = false
     @Environment(\.openURL) private var openURL
 
     var body: some View {
         Group {
             if let place {
                 VStack(alignment: .leading, spacing: 10) {
-                    Map(initialPosition: .region(MKCoordinateRegion(
-                        center: place.coordinate, latitudinalMeters: 900, longitudinalMeters: 900
-                    ))) {
-                        Marker(place.name ?? location, coordinate: place.coordinate)
+                    Button { isChoosingApp = true } label: {
+                        Map(initialPosition: .region(MKCoordinateRegion(
+                            center: place.coordinate, latitudinalMeters: 900, longitudinalMeters: 900
+                        )), interactionModes: []) {
+                            Marker(place.name ?? location, coordinate: place.coordinate)
+                        }
+                        // The button takes every tap, so the map never pans or zooms.
+                        .allowsHitTesting(false)
+                        .frame(height: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(alignment: .bottomTrailing) {
+                            Label("Open in Maps", systemImage: "arrow.up.forward.app")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(.regularMaterial, in: Capsule())
+                                .padding(8)
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .frame(height: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open \(place.name ?? location) in Maps")
+                    .confirmationDialog("Open in", isPresented: $isChoosingApp) {
+                        Button("Apple Maps") { place.mapItem.openInMaps() }
+                        Button("Google Maps") { if let url = place.googleMapsURL(directions: false) { openURL(url) } }
+                        Button("Cancel", role: .cancel) {}
+                    }
                     if let address = place.address, address != location {
                         Text(address)
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
-                    HStack(spacing: 8) {
-                        Menu {
-                            Button("In Apple Maps") { openInAppleMaps(directions: true) }
-                            Button("In Google Maps") { openInGoogleMaps(directions: true) }
-                        } label: {
-                            Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond")
-                        }
-                        .fixedSize()
-                        Button("Apple Maps") { openInAppleMaps(directions: false) }
-                        Button("Google Maps") { openInGoogleMaps(directions: false) }
-                    }
-                    .controlSize(.regular)
-                    // Keeps three buttons on one line on a narrow iPhone.
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
                 }
             } else if !searched {
                 // Holds the card's shape while searching, so the page doesn't jump much.
@@ -210,13 +217,5 @@ struct LocationMap: View {
             place = await PlaceFinder.place(for: location, near: near)
             searched = true
         }
-    }
-
-    private func openInAppleMaps(directions: Bool) {
-        place?.mapItem.openInMaps(launchOptions: directions ? [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDefault] : nil)
-    }
-
-    private func openInGoogleMaps(directions: Bool) {
-        if let url = place?.googleMapsURL(directions: directions) { openURL(url) }
     }
 }

@@ -10,7 +10,6 @@ struct EventDetailView: View {
     @Environment(\.openURL) private var openURL
     @State private var isViewingPhoto = false
     @State private var isEditing = false
-    @State private var isConfirmingDeleteAll = false
     @State private var pendingLink: URL?
 
     var body: some View {
@@ -69,16 +68,6 @@ struct EventDetailView: View {
         } message: { url in
             Text(url.absoluteString)
         }
-        .confirmationDialog(
-            "Delete all \(fromSamePhoto.count) events from this photo?",
-            isPresented: $isConfirmingDeleteAll,
-            titleVisibility: .visible
-        ) {
-            Button("Delete \(fromSamePhoto.count) Events", role: .destructive) { delete(fromSamePhoto.map(\.id)) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("They also come off your calendar. You can undo this right after.")
-        }
     }
 
     private func delete(_ ids: [UUID]) {
@@ -115,10 +104,15 @@ struct EventDetailView: View {
                     .font(.title3)
                     .foregroundStyle(.primary.opacity(0.8))
                     .fixedSize(horizontal: false, vertical: true)
-                Label(statusText(event), systemImage: statusSymbol(event))
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(event.state == .onCalendar ? AnyShapeStyle(.green) : AnyShapeStyle(.primary.opacity(0.8)))
-                    .padding(.top, 2)
+                // The symbol carries the color, so the words stay readable over any backdrop.
+                Label {
+                    Text(statusText(event)).foregroundStyle(.primary)
+                } icon: {
+                    Image(systemName: statusSymbol(event))
+                        .foregroundStyle(event.state == .onCalendar ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                }
+                .font(.callout.weight(.medium))
+                .padding(.top, 2)
             }
         }
     }
@@ -140,11 +134,11 @@ struct EventDetailView: View {
                     Spacer()
                 }
                 Button { isEditing = true } label: {
-                    Label("Edit", systemImage: "pencil").labelStyle(.iconOnly)
+                    Text("Edit")
                 }
                 .glassButton()
                 Button(role: .destructive) { delete([event.id]) } label: {
-                    Label("Delete", systemImage: "trash").labelStyle(.iconOnly)
+                    Label("Delete", systemImage: "trash").labelStyle(.iconOnly).foregroundStyle(.red)
                 }
                 .glassButton()
             }
@@ -158,14 +152,10 @@ struct EventDetailView: View {
     private func moreMenu(_ event: FlyerEvent, flyer: Flyer?) -> some View {
         Menu {
             Button("View Photo", systemImage: "photo") { isViewingPhoto = true }
-            Button("Edit", systemImage: "pencil") { isEditing = true }
             if let flyer, flyer.mayBeInLibrary, flyer.assetID != "demo" {
                 Button("Remove Photo from Photos", systemImage: "photo.badge.arrow.down") {
                     Task { await engine.removeFromLibrary(flyerID: flyer.id) }
                 }
-            }
-            if let url = event.url.flatMap(URL.init(string:)) {
-                ShareLink(item: url) { Label("Share Link", systemImage: "square.and.arrow.up") }
             }
             Divider()
             Button("Delete", systemImage: "trash", role: .destructive) { delete([event.id]) }
@@ -217,39 +207,28 @@ struct EventDetailView: View {
         }
     }
 
-    /// The other events read from this photo, so a flyer that added too much is quick to clear out.
+    /// The other events read from this photo, on a page of their own where you can manage them.
     private func samePhoto(_ events: [FlyerEvent], current: FlyerEvent) -> some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("\(events.count) events from this photo").font(.headline)
-                    Spacer()
-                    Button("Delete All…", role: .destructive) { isConfirmingDeleteAll = true }
-                }
-                ForEach(events) { other in
-                    NavigationLink(value: other.id) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(other.name).fontWeight(other.id == current.id ? .semibold : .regular)
-                                Text(other.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(other, day: nil))
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 8)
-                            if other.id == current.id {
-                                Text("This event").font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                            }
-                        }
-                        .multilineTextAlignment(.leading)
-                        .contentShape(Rectangle())
+        NavigationLink {
+            PhotoEventsView(model: model, engine: engine, flyerID: current.flyerID, currentID: current.id)
+        } label: {
+            GlassCard {
+                HStack(spacing: 12) {
+                    Image(systemName: "photo.stack").foregroundStyle(.secondary).frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(events.count) events from this photo").font(.headline)
+                        Text(events.filter { $0.id != current.id }.map(\.name).joined(separator: ", "))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(other.id == current.id)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                 }
+                .contentShape(Rectangle())
             }
         }
+        .buttonStyle(.plain)
     }
 
     private func statusSymbol(_ event: FlyerEvent) -> String {
@@ -297,21 +276,28 @@ struct PhotoPager: View {
     let placeholder: UIImage?
     let onClose: () -> Void
     @State private var page = 0
+    /// How far a photo has been pulled down to close. The black fades as it goes.
+    @State private var dismissDrag: CGFloat = 0
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black.opacity(1 - min(dismissDrag / 400, 0.7)).ignoresSafeArea()
             if sources.isEmpty {
-                ZoomablePhoto(source: nil, placeholder: placeholder)
+                ZoomablePhoto(source: nil, placeholder: placeholder, dismissDrag: $dismissDrag, onClose: onClose)
             } else {
                 TabView(selection: $page) {
                     ForEach(Array(sources.enumerated()), id: \.offset) { index, source in
-                        ZoomablePhoto(source: source, placeholder: index == 0 ? placeholder : nil).tag(index)
+                        ZoomablePhoto(
+                            source: source, placeholder: index == 0 ? placeholder : nil,
+                            dismissDrag: $dismissDrag, onClose: onClose
+                        )
+                        .tag(index)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: sources.count > 1 ? .always : .never))
             }
         }
+        .presentationBackground(.clear)
         .overlay(alignment: .topTrailing) {
             Button(action: onClose) {
                 Label("Close", systemImage: "xmark").labelStyle(.iconOnly).font(.title3.weight(.semibold))
@@ -328,6 +314,8 @@ struct PhotoPager: View {
 private struct ZoomablePhoto: View {
     let source: PhoneImageSource?
     let placeholder: UIImage?
+    @Binding var dismissDrag: CGFloat
+    let onClose: () -> Void
     @State private var image: UIImage?
     @State private var failed = false
     @State private var scale: CGFloat = 1
@@ -343,7 +331,9 @@ private struct ZoomablePhoto: View {
                     .scaledToFit()
                     .scaleEffect(scale)
                     .offset(offset)
+                    .offset(y: dismissDrag)
                     .gesture(zoom)
+                    .simultaneousGesture(scale == 1 ? pullToClose : nil)
                     .onTapGesture(count: 2) {
                         withAnimation(.snappy) {
                             if scale > 1 { reset() } else { scale = 3; baseScale = 3 }
@@ -379,6 +369,22 @@ private struct ZoomablePhoto: View {
                     offset = CGSize(width: baseOffset.width + value.translation.width, height: baseOffset.height + value.translation.height)
                 }
                 .onEnded { _ in baseOffset = offset })
+    }
+
+    /// Pulling an unzoomed photo down closes the viewer, as in Photos. Sideways swipes still turn pages.
+    private var pullToClose: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                guard value.translation.height > 0, value.translation.height > abs(value.translation.width) else { return }
+                dismissDrag = value.translation.height
+            }
+            .onEnded { value in
+                if dismissDrag > 120 || value.predictedEndTranslation.height > 400 && dismissDrag > 0 {
+                    onClose()
+                } else {
+                    withAnimation(.snappy) { dismissDrag = 0 }
+                }
+            }
     }
 
     private func reset() {
@@ -475,5 +481,61 @@ struct PhoneEditEventView: View {
             $0.details = details.isEmpty ? nil : details
         }
         dismiss()
+    }
+}
+
+/// Every event read from one photo, to look through or clear out together.
+struct PhotoEventsView: View {
+    @ObservedObject var model: PhoneModel
+    @ObservedObject var engine: FlyersEngine
+    let flyerID: UUID
+    /// The event you came from.
+    let currentID: UUID
+    @State private var isConfirmingDeleteAll = false
+
+    var body: some View {
+        let events = EventList.fromFlyer(flyerID, in: engine.document.events, today: .today)
+        List {
+            Section {
+                ForEach(events) { event in
+                    NavigationLink(value: event.id) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(event.name).fontWeight(event.id == currentID ? .semibold : .regular)
+                            Text(event.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(event, day: nil))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button("Delete", systemImage: "trash", role: .destructive) { model.delete([event.id]) }
+                    }
+                }
+            } footer: {
+                Text("Swipe an event to delete it. Deleted events wait under Past, where you can restore them.")
+            }
+            if events.count > 1 {
+                Section {
+                    Button("Delete All \(events.count) Events", role: .destructive) { isConfirmingDeleteAll = true }
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .navigationTitle("From This Photo")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if events.isEmpty {
+                ContentUnavailableView("No events left", systemImage: "photo", description: Text("Every event from this photo was deleted."))
+            }
+        }
+        .confirmationDialog(
+            "Delete all \(events.count) events from this photo?",
+            isPresented: $isConfirmingDeleteAll,
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(events.count) Events", role: .destructive) { model.delete(events.map(\.id)) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They also come off your calendar. You can restore them from Past.")
+        }
     }
 }
