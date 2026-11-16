@@ -857,6 +857,17 @@ public final class FlyersEngine: ObservableObject {
         persist()
     }
 
+    /// Photos read before sync were recorded without their iCloud Photos ID, which is how other
+    /// devices know not to read them again. Fills it in for the ones still in Photos.
+    public func fillPhotoCloudIDs() {
+        let missing = document.photos.filter { $0.value.cloudID == nil && !$0.key.hasPrefix("cloud:") }.map(\.key)
+        guard !missing.isEmpty else { return }
+        let found = photosCloudIDs(for: missing)
+        guard !found.isEmpty else { return }
+        for (id, cloudID) in found { document.photos[id]?.cloudID = cloudID }
+        persist()
+    }
+
     /// Whether this device adds the event to Calendar and watches Calendar for it.
     public func isOwnedHere(_ event: FlyerEvent) -> Bool {
         event.ownerDevice == nil || event.ownerDevice == deviceID

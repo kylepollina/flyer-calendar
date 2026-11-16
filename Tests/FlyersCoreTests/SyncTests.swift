@@ -289,6 +289,21 @@ private func device(
         #expect(phone.engine.visibleEvents.count == 1)
     }
 
+    @Test func photosReadBeforeSyncAreNotReadAgainElsewhere() async {
+        let cloud = MemoryCloud(), calendar = SharedCalendar()
+        let mac = device("mac", cloud: cloud, calendar: calendar, image: image)
+        let phone = device("phone", cloud: cloud, calendar: calendar, image: image)
+        await mac.engine.scan()
+        // As saved before sync existed: no iCloud Photos ID.
+        mac.engine.document.photos["mac-c1"]?.cloudID = nil
+
+        mac.engine.fillPhotoCloudIDs()
+        #expect(mac.engine.document.photos["mac-c1"]?.cloudID == "c1")
+        await mac.sync.pushNow()
+        await phone.engine.scan()
+        #expect(phone.extractor.calls == 0)
+    }
+
     @Test func aPhotoBeingReadElsewhereIsLeftAloneUntilItsClaimRunsOut() async {
         let cloud = MemoryCloud(), calendar = SharedCalendar()
         let phone = device("phone", cloud: cloud, calendar: calendar, image: image)

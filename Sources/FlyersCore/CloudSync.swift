@@ -44,6 +44,7 @@ public final class CloudSync: ObservableObject, SyncConnection {
             syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
         }
         engine.claimUnownedEvents()
+        engine.fillPhotoCloudIDs()
         engine.sync = self
         changed()
         Task { await checkAccount(containerID) }
