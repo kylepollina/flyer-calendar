@@ -293,6 +293,15 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             photosSection
+            Section {
+                MapsAppPicker()
+            } header: {
+                Text("Maps")
+            } footer: {
+                Text("Where an event's place opens when you click its map. Device Default uses the maps app your Mac opens map links in.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             SyncSection(cloudSync: model.cloudSync)
             Section("General") {
                 Toggle("Start at login", isOn: Binding(

@@ -18,6 +18,13 @@ struct PhoneSettingsView: View {
                 calendarSection
                 scanningSection
                 photosSection
+                Section {
+                    MapsAppPicker()
+                } header: {
+                    Text("Maps")
+                } footer: {
+                    Text("Where an event's place opens when you tap its map. Device Default uses the maps app your iPhone opens map links in.")
+                }
                 SyncSection(cloudSync: model.cloudSync)
                 keySection
                 Section("Spending") {

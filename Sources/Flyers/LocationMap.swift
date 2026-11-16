@@ -18,6 +18,17 @@ struct FoundPlace: Codable, Hashable, Sendable {
     }
 
     /// Opens the place, or directions to it, in Google Maps.
+    /// Apple's own maps link, which the system opens in whichever maps app it uses for places.
+    var appleMapsURL: URL? {
+        var components = URLComponents(string: "https://maps.apple.com/")!
+        let query = [name, address].compactMap { $0 }.joined(separator: ", ")
+        components.queryItems = [
+            URLQueryItem(name: "ll", value: "\(latitude),\(longitude)"),
+            URLQueryItem(name: "q", value: query.isEmpty ? "\(latitude),\(longitude)" : query),
+        ]
+        return components.url
+    }
+
     func googleMapsURL(directions: Bool) -> URL? {
         // The name and address find the actual place listing. Coordinates are the fallback.
         let query = [name, address].compactMap { $0 }.joined(separator: ", ")
@@ -159,22 +170,37 @@ extension Flyer {
     }
 }
 
-/// A still map of the event's place. Tapping it offers to open the place in Apple Maps or Google Maps,
-/// where you can get directions. Shows nothing when the place can't be found, so the printed
-/// location stands alone.
+/// Which app a tap on an event's map opens. Chosen in Settings, and kept on each device, since one
+/// may have Google Maps and another not.
+enum MapsApp: String, CaseIterable, Identifiable {
+    case system, apple, google
+    static let key = "mapsApp"
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .system: return "Device Default"
+        case .apple: return "Apple Maps"
+        case .google: return "Google Maps"
+        }
+    }
+}
+
+/// A still map of the event's place. Tapping it opens the place in the maps app chosen in
+/// Settings, where you can get directions. Shows nothing when the place can't be found, so the
+/// printed location stands alone.
 struct LocationMap: View {
     let location: String
     let near: CLLocationCoordinate2D?
     @State private var place: FoundPlace?
     @State private var searched = false
-    @State private var isChoosingApp = false
+    @AppStorage(MapsApp.key) private var mapsApp = MapsApp.system
     @Environment(\.openURL) private var openURL
 
     var body: some View {
         Group {
             if let place {
                 VStack(alignment: .leading, spacing: 10) {
-                    Button { isChoosingApp = true } label: {
+                    Button { open(place) } label: {
                         Map(initialPosition: .region(MKCoordinateRegion(
                             center: place.coordinate, latitudinalMeters: 900, longitudinalMeters: 900
                         )), interactionModes: []) {
@@ -185,7 +211,7 @@ struct LocationMap: View {
                         .frame(height: 180)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(alignment: .bottomTrailing) {
-                            Label("Open in Maps", systemImage: "arrow.up.forward.app")
+                            Label(mapsApp == .google ? "Open in Google Maps" : "Open in Maps", systemImage: "arrow.up.forward.app")
                                 .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 5)
@@ -196,11 +222,6 @@ struct LocationMap: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open \(place.name ?? location) in Maps")
-                    .confirmationDialog("Open in", isPresented: $isChoosingApp) {
-                        Button("Apple Maps") { place.mapItem.openInMaps() }
-                        Button("Google Maps") { if let url = place.googleMapsURL(directions: false) { openURL(url) } }
-                        Button("Cancel", role: .cancel) {}
-                    }
                     if let address = place.address, address != location {
                         Text(address)
                             .font(.callout)
@@ -216,6 +237,25 @@ struct LocationMap: View {
         .task(id: location) {
             place = await PlaceFinder.place(for: location, near: near)
             searched = true
+        }
+    }
+
+    private func open(_ place: FoundPlace) {
+        switch mapsApp {
+        case .system: if let url = place.appleMapsURL { openURL(url) }
+        case .apple: place.mapItem.openInMaps()
+        case .google: if let url = place.googleMapsURL(directions: false) { openURL(url) }
+        }
+    }
+}
+
+/// The Settings row choosing which maps app opens places.
+struct MapsAppPicker: View {
+    @AppStorage(MapsApp.key) private var mapsApp = MapsApp.system
+
+    var body: some View {
+        Picker("Open places in", selection: $mapsApp) {
+            ForEach(MapsApp.allCases) { Text($0.title).tag($0) }
         }
     }
 }
