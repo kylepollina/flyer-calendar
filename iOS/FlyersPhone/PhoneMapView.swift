@@ -187,7 +187,8 @@ struct PhoneMapView: View {
                       let region = MKCoordinateRegion.fitting(placesWithEvents.map(\.place.coordinate)) else { return }
                 position = .region(region)
             }
-            .task(id: located.map(\.id)) { await findPlaces() }
+            // Searches again when an event's location is edited, not only when events come and go.
+            .task(id: located.map { "\($0.id)|\($0.location ?? "")" }) { await findPlaces() }
         }
     }
 
@@ -253,6 +254,8 @@ struct PhoneMapView: View {
             if let place = PlaceFinder.cached(for: location, near: near) {
                 places[event.id] = place
             } else {
+                // Its old place, from before an edit, shouldn't linger while the new one is found.
+                places[event.id] = nil
                 missing.append(event)
             }
         }

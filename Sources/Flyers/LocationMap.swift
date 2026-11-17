@@ -41,8 +41,9 @@ struct FoundPlace: Codable, Hashable, Sendable {
     }
 }
 
-/// Finds a flyer's location on the map, searching near where the photo was taken.
-/// Results are saved, so the map of every event doesn't search again each launch.
+/// Finds a flyer's location on the map, searching near where the photo was taken, or near where
+/// you are for a photo with no location, like a screenshot. Results are saved, so the map of every
+/// event doesn't search again each launch. Editing an event's location searches for the new text.
 @MainActor
 enum PlaceFinder {
     /// A saved miss is tried again after a while, since it may have been a network failure.
@@ -73,8 +74,10 @@ enum PlaceFinder {
         if let entry = entries[key], entry.place != nil || entry.searchedAt.timeIntervalSinceNow > -7 * 86400 {
             return entry.place
         }
-        // With no photo location, as with screenshots, a vague place like "Park pavilion" matches
-        // somewhere random. Only a street address, which has a number, is specific enough.
+        // A screenshot has no photo location, so search near you instead: flyers you see are
+        // usually for places nearby. Without either, a vague place like "Park pavilion" would match
+        // somewhere random, so only a street address, which has a number, is specific enough.
+        let center = center ?? CLLocationManager().location?.coordinate
         guard center != nil || query.contains(where: \.isNumber) else { return nil }
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = query
