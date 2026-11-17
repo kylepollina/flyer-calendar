@@ -4,53 +4,80 @@ import FlyersCore
 import MapKit
 import SwiftUI
 
-/// Every upcoming event that has a findable place, on one map, as on the iPhone.
-/// Events at the same place share a pin, and selecting it lists them.
+/// Every upcoming event that has a findable place, on one map, drawn like the iPhone's: each pin is
+/// the flyer's photo, and pins that would overlap at the current zoom share one numbered circle,
+/// which splits apart as you zoom in. Clicking a pin lists its events.
 struct EventsMap: View {
     @ObservedObject var engine: FlyersEngine
     let thumbnail: (FlyerEvent) -> NSImage?
     let onOpen: (UUID) -> Void
 
-    struct Pin: Identifiable, Hashable {
+    /// One place, with every event there.
+    struct Place: Identifiable {
         var place: FoundPlace
         var events: [FlyerEvent]
-        var hasUpcoming: Bool
         var id: String { String(format: "%.5f,%.5f", place.latitude, place.longitude) }
-
-        static func == (a: Pin, b: Pin) -> Bool { a.id == b.id && a.events.map(\.id) == b.events.map(\.id) }
-        func hash(into hasher: inout Hasher) { hasher.combine(id) }
     }
 
+    /// What's drawn: one place, or several close enough to overlap at this zoom.
+    struct Pin: Identifiable {
+        var places: [Place]
+        /// Soonest first.
+        var events: [FlyerEvent]
+        var id: String { places.map(\.id).joined(separator: "|") }
+        var coordinate: CLLocationCoordinate2D { places[0].place.coordinate }
+    }
+
+    /// Pins closer on screen than this share one, so a pin never hides another.
+    private static let groupingDistance: Double = 64
+
     @State private var places: [UUID: FoundPlace] = [:]
-    @State private var selectedPin: String?
+    /// The open pin, by the events in it, so it stays open while grouping changes.
+    @State private var selectedEvents: Set<UUID> = []
+    /// When a pin was last clicked, so the same click reaching the map doesn't close it again.
+    @State private var lastPinTap = Date.distantPast
     @State private var isSearching = false
     @State private var position = MapCameraPosition.automatic
+    @State private var viewport: MapGrouping.Viewport?
+    @State private var mapSize = CGSize.zero
     /// Asks once to show where you are. Kept here so the request isn't dropped.
     @State private var locationManager = CLLocationManager()
     @State private var userLocation: CLLocation?
-    /// True while the map moves, which is when the dot drawn over it has to follow frame by frame.
-    @State private var isCameraMoving = false
+    /// Where you were looking, kept across opening events, switching lists and relaunching.
+    @AppStorage("map.region") private var savedRegion = ""
     private let today = Day.today
 
     private var located: [FlyerEvent] {
         engine.visibleEvents.filter { $0.location != nil && !$0.isOver(today: today) }
     }
 
-    private var pins: [Pin] {
-        var byPlace: [String: Pin] = [:]
+    private var placesWithEvents: [Place] {
+        var byPlace: [String: Place] = [:]
         for event in located {
-            guard let place = places[event.id] else { continue }
-            var pin = byPlace[Pin(place: place, events: [], hasUpcoming: false).id] ?? Pin(place: place, events: [], hasUpcoming: false)
-            pin.events.append(event)
-            pin.hasUpcoming = true
-            byPlace[pin.id] = pin
+            guard let found = places[event.id] else { continue }
+            let empty = Place(place: found, events: [])
+            var place = byPlace[empty.id] ?? empty
+            place.events.append(event)
+            byPlace[place.id] = place
         }
         return byPlace.values.sorted { $0.id < $1.id }
     }
 
+    private var pins: [Pin] {
+        let all = placesWithEvents
+        let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        let points = all.map { MapGrouping.Point(id: $0.id, latitude: $0.place.latitude, longitude: $0.place.longitude) }
+        return MapGrouping.group(points, in: viewport, distance: Self.groupingDistance).map { ids in
+            let grouped = ids.compactMap { byID[$0] }
+            let events = grouped.flatMap(\.events).sorted {
+                ($0.nextDay(onOrAfter: today) ?? today) < ($1.nextDay(onOrAfter: today) ?? today)
+            }
+            return Pin(places: grouped, events: events)
+        }
+    }
+
     var body: some View {
         let pins = pins
-        MapReader { proxy in
         Map(position: $position) {
             // How sure the Mac is of where you are, as a soft blue circle under everything.
             if let userLocation, userLocation.horizontalAccuracy > 0 {
@@ -59,38 +86,55 @@ struct EventsMap: View {
                     .stroke(.blue.opacity(0.3), lineWidth: 1)
             }
             ForEach(pins) { pin in
-                Annotation(
-                    pin.events.count == 1 ? pin.events[0].name : (pin.place.name ?? "\(pin.events.count) events"),
-                    coordinate: pin.place.coordinate
-                ) {
-                    PinBadge(count: pin.events.count, isUpcoming: pin.hasUpcoming, isSelected: selectedPin == pin.id) {
-                        selectedPin = selectedPin == pin.id ? nil : pin.id
+                Annotation(title(of: pin), coordinate: pin.coordinate, anchor: .bottom) {
+                    EventPin(
+                        title: title(of: pin),
+                        image: thumbnail(pin.events[0]),
+                        count: pin.events.count,
+                        isSelected: isSelected(pin)
+                    ) {
+                        lastPinTap = Date()
+                        selectedEvents = isSelected(pin) ? [] : Set(pin.events.map(\.id))
                     }
                 }
+                // The pin draws its own name, under its point.
+                .annotationTitles(.hidden)
+            }
+            // Anchored to the map like the events, so it moves with it exactly.
+            if let userLocation {
+                Annotation("My Location", coordinate: userLocation.coordinate) { YouAreHere() }
+                    .annotationTitles(.hidden)
             }
         }
-        .onMapCameraChange(frequency: .continuous) { isCameraMoving = true }
-        .onMapCameraChange(frequency: .onEnd) { isCameraMoving = false }
-        // You, drawn over the map rather than in it, so you're never under a pin. Placed again every
-        // frame while the map moves, so it stays locked in place.
-        .overlay {
-            TimelineView(.animation(paused: !isCameraMoving)) { _ in
-                if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
-                    YouAreHere().position(spot)
+        // Clicking anywhere else on the map closes an open pin's card.
+        .onTapGesture {
+            guard !selectedEvents.isEmpty else { return }
+            DispatchQueue.main.async {
+                if Date().timeIntervalSince(lastPinTap) > 0.3 {
+                    withAnimation(.snappy) { selectedEvents = [] }
                 }
             }
-            .allowsHitTesting(false)
         }
+        .onGeometryChange(for: CGSize.self, of: \.size) { mapSize = $0 }
+        .onMapCameraChange(frequency: .onEnd) { context in
+            savedRegion = MapLook.encode(context.region)
+            viewport = MapGrouping.Viewport(
+                centerLatitude: context.region.center.latitude, centerLongitude: context.region.center.longitude,
+                latitudeSpan: context.region.span.latitudeDelta, longitudeSpan: context.region.span.longitudeDelta,
+                width: mapSize.width, height: mapSize.height
+            )
         }
         .onAppear {
             if locationManager.authorizationStatus == .notDetermined { locationManager.requestWhenInUseAuthorization() }
+            // Back from an event, or another list, the map is where you left it.
+            if let region = MapLook.decode(savedRegion) { position = .region(region) }
         }
+        // Where you are when the map opens, and again every 10 minutes while it's open.
         .task {
-            do {
-                for try await update in CLLocationUpdate.liveUpdates() {
-                    if let location = update.location { userLocation = location }
-                }
-            } catch {}
+            while !Task.isCancelled {
+                if let location = await YouAreHere.currentLocation() { userLocation = location }
+                try? await Task.sleep(for: .seconds(600))
+            }
         }
         .overlay(alignment: .top) {
             if isSearching {
@@ -105,32 +149,71 @@ struct EventsMap: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let pin = pins.first(where: { $0.id == selectedPin }) {
+            if let pin = pins.first(where: isSelected) {
                 pinCard(pin).padding(16).transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.snappy, value: selectedPin)
-        // Reframes when the set of places changes, not on every redraw, so it never fights your panning.
-        .onChange(of: pins.map(\.id), initial: true) {
-            if let region = MKCoordinateRegion.fitting(pins.map(\.place.coordinate)) { position = .region(region) }
+        .overlay(alignment: .bottomTrailing) {
+            Button(action: centerOnYou) {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassSurface(in: Circle())
+            .help("Show my location")
+            .accessibilityLabel("Show My Location")
+            .padding(16)
+        }
+        .animation(.snappy, value: selectedEvents)
+        // Fits every place the first time, before you've looked anywhere yourself.
+        .onChange(of: placesWithEvents.map(\.id), initial: true) {
+            guard savedRegion.isEmpty,
+                  let region = MKCoordinateRegion.fitting(placesWithEvents.map(\.place.coordinate)) else { return }
+            position = .region(region)
         }
         .task(id: located.map(\.id)) { await findPlaces() }
+    }
+
+    /// Moves the map to you, keeping the zoom, without following you around afterwards.
+    private func centerOnYou() {
+        guard let userLocation else {
+            if locationManager.authorizationStatus == .notDetermined { locationManager.requestWhenInUseAuthorization() }
+            return
+        }
+        let span = viewport.map { MKCoordinateSpan(latitudeDelta: $0.latitudeSpan, longitudeDelta: $0.longitudeSpan) }
+            ?? MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        withAnimation(.snappy) {
+            position = .region(MKCoordinateRegion(center: userLocation.coordinate, span: span))
+        }
+    }
+
+    /// A pin is open when it holds the events last clicked, even if zooming regrouped them.
+    private func isSelected(_ pin: Pin) -> Bool {
+        !selectedEvents.isEmpty && !selectedEvents.isDisjoint(with: pin.events.map(\.id))
+    }
+
+    private func title(of pin: Pin) -> String {
+        if pin.events.count == 1 { return pin.events[0].name }
+        if pin.places.count == 1, let name = pin.places[0].place.name { return name }
+        return "\(pin.events.count) events"
     }
 
     private func pinCard(_ pin: Pin) -> some View {
         GlassCard(padding: 12) {
             VStack(alignment: .leading, spacing: 8) {
-                if let name = pin.place.name {
-                    Text(name).font(.headline)
-                }
+                Text(pin.places.count == 1 ? (pin.places[0].place.name ?? title(of: pin)) : "\(pin.events.count) events nearby")
+                    .font(.headline)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(pin.events.sorted { ($0.startDay?.number ?? 0) > ($1.startDay?.number ?? 0) }) { event in
+                        ForEach(pin.events) { event in
                             Button { onOpen(event.id) } label: {
                                 RowLabel(
                                     title: event.name,
                                     subtitle: EventFormat.summary(event, day: event.nextDay(onOrAfter: today)),
-                                    detail: event.isOver(today: today) ? "Past" : nil,
+                                    detail: nil,
                                     thumbnail: thumbnail(event),
                                     repeats: event.rrule != nil,
                                     status: nil

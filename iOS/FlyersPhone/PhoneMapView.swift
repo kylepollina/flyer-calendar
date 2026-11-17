@@ -44,8 +44,6 @@ struct PhoneMapView: View {
     @State private var locationManager = CLLocationManager()
     /// Where you are, kept current while the map is open.
     @State private var userLocation: CLLocation?
-    /// True while the map moves, which is when the dot drawn over it has to follow frame by frame.
-    @State private var isCameraMoving = false
     /// Where you were looking, kept across opening an event, switching tabs and relaunching.
     @AppStorage("map.region") private var savedRegion = ""
     private let today = Day.today
@@ -82,7 +80,6 @@ struct PhoneMapView: View {
     var body: some View {
         let pins = pins
         NavigationStack(path: $path) {
-            MapReader { proxy in
             Map(position: $position) {
                 // How sure the phone is of where you are, as a soft blue circle under everything.
                 if let userLocation, userLocation.horizontalAccuracy > 0 {
@@ -92,7 +89,7 @@ struct PhoneMapView: View {
                 }
                 ForEach(pins) { pin in
                     Annotation(title(of: pin), coordinate: pin.coordinate, anchor: .bottom) {
-                        PhotoPin(
+                        EventPin(
                             title: title(of: pin),
                             image: model.thumbnail(engine.flyer(id: pin.events[0].flyerID)),
                             count: pin.events.count,
@@ -105,19 +102,11 @@ struct PhoneMapView: View {
                     // The pin draws its own name, under its point.
                     .annotationTitles(.hidden)
                 }
-            }
-            .onMapCameraChange(frequency: .continuous) { isCameraMoving = true }
-            // You, drawn over the map rather than in it, since MapKit stacks its own pins however it
-            // likes. This way the dot is always on top of the events. While the map moves it's
-            // placed again every frame from the map's live position, so it stays locked in place.
-            .overlay {
-                TimelineView(.animation(paused: !isCameraMoving)) { _ in
-                    if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
-                        YouAreHere().position(spot)
-                    }
+                // Anchored to the map like the events, so it moves with it exactly.
+                if let userLocation {
+                    Annotation("My Location", coordinate: userLocation.coordinate) { YouAreHere() }
+                        .annotationTitles(.hidden)
                 }
-                .allowsHitTesting(false)
-            }
             }
             .mapControls { MapCompass() }
             // Tapping anywhere else on the map closes an open pin's card. A tap on a pin can reach
@@ -132,7 +121,6 @@ struct PhoneMapView: View {
             }
             .onGeometryChange(for: CGSize.self, of: \.size) { mapSize = $0 }
             .onMapCameraChange(frequency: .onEnd) { context in
-                isCameraMoving = false
                 savedRegion = MapLook.encode(context.region)
                 viewport = MapGrouping.Viewport(
                     centerLatitude: context.region.center.latitude, centerLongitude: context.region.center.longitude,
@@ -155,13 +143,12 @@ struct PhoneMapView: View {
                 // Back from an event, or another tab, the map is where you left it.
                 if let region = MapLook.decode(savedRegion) { position = .region(region) }
             }
+            // Where you are when the map opens, and again every 10 minutes while it's open.
             .task {
-                // Follows you while the map is open, and stops when you leave it.
-                do {
-                    for try await update in CLLocationUpdate.liveUpdates() {
-                        if let location = update.location { userLocation = location }
-                    }
-                } catch {}
+                while !Task.isCancelled {
+                    if let location = await YouAreHere.currentLocation() { userLocation = location }
+                    try? await Task.sleep(for: .seconds(600))
+                }
             }
             // The location button sits at the right edge just above the Map button in the tab bar,
             // where your thumb already is, with an open pin's card under it.
@@ -278,93 +265,3 @@ struct PhoneMapView: View {
     }
 }
 
-/// Saves the map's view as text, for `@AppStorage`.
-enum MapLook {
-    static func encode(_ region: MKCoordinateRegion) -> String {
-        [region.center.latitude, region.center.longitude, region.span.latitudeDelta, region.span.longitudeDelta]
-            .map { String($0) }.joined(separator: ",")
-    }
-
-    static func decode(_ text: String) -> MKCoordinateRegion? {
-        let numbers = text.split(separator: ",").compactMap { Double($0) }
-        guard numbers.count == 4 else { return nil }
-        return MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: numbers[0], longitude: numbers[1]),
-            span: MKCoordinateSpan(latitudeDelta: numbers[2], longitudeDelta: numbers[3])
-        )
-    }
-}
-
-/// A pin made of the flyer's photo, cropped square, with a point under it marking the spot and
-/// the name under that. The name hangs below without changing the pin's size, so the point stays
-/// on the place. A pin holding several events shows just their number in a circle instead.
-private struct PhotoPin: View {
-    let title: String
-    let image: UIImage?
-    let count: Int
-    let isSelected: Bool
-    let action: () -> Void
-
-    private let size: CGFloat = 58
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 0) {
-                if count > 1 {
-                    // Several events: just how many, big. Zoom in and they split into photos.
-                    Text("\(count)")
-                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .frame(width: 42, height: 42)
-                        .background(Color.accentColor, in: Circle())
-                        .overlay { Circle().strokeBorder(.white, lineWidth: 3) }
-                } else {
-                    photo
-                        .frame(width: size, height: size)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white, lineWidth: 3) }
-                }
-                Image(systemName: "triangle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white)
-                    .rotationEffect(.degrees(180))
-                    .offset(y: -3)
-            }
-            .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-            .overlay(alignment: .bottom) {
-                name.alignmentGuide(.bottom) { $0[.top] - 2 }
-            }
-            .scaleEffect(isSelected ? 1.2 : 1, anchor: .bottom)
-            .animation(.snappy, value: isSelected)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(count == 1 ? title : "\(title), \(count) events")
-    }
-
-    @ViewBuilder private var photo: some View {
-        if let image {
-            Image(uiImage: image).resizable().scaledToFill()
-        } else {
-            Image(systemName: "calendar")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.accentColor)
-        }
-    }
-
-    /// Plain text, like the map's own labels: a soft outline in the map's background color keeps
-    /// it readable over streets and parks without a box behind it.
-    private var name: some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .lineLimit(2)
-            .multilineTextAlignment(.center)
-            .frame(width: 130)
-            .fixedSize(horizontal: false, vertical: true)
-            .shadow(color: Color(uiColor: .systemBackground), radius: 1)
-            .shadow(color: Color(uiColor: .systemBackground), radius: 1)
-            .shadow(color: Color(uiColor: .systemBackground), radius: 2)
-    }
-}
