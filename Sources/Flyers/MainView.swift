@@ -99,13 +99,6 @@ struct MainView: View {
                         .overlay(alignment: .bottom) { notices }
                         .toolbar {
                             ToolbarItem(placement: .primaryAction) {
-                                Toggle(isOn: $isShowingMap) {
-                                    Label("Map", systemImage: "map")
-                                }
-                                .keyboardShortcut("m", modifiers: [.command, .shift])
-                                .help("Show every event on a map (⇧⌘M)")
-                            }
-                            ToolbarItem(placement: .primaryAction) {
                                 Button {
                                     Task { await engine.scan() }
                                 } label: {
@@ -220,6 +213,7 @@ struct MainView: View {
     /// Goes to a list, leaving the settings page even if that list is already the current one.
     private func showList(_ item: ListTab) {
         model.isShowingSettings = false
+        isShowingMap = false
         if item == tab {
             if selection == nil { selection = firstRowID(in: tab) }
         } else {
@@ -328,13 +322,34 @@ struct MainView: View {
                 .padding(.bottom, 8)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                GlassTabs(
-                    items: [(ListTab.upcoming, "calendar"), (ListTab.past, "clock")],
-                    selection: Binding(get: { tab }, set: showList)
-                )
+                HStack(spacing: 10) {
+                    GlassTabs(
+                        items: [(ListTab.upcoming, "calendar"), (ListTab.past, "clock")],
+                        selection: Binding(get: { tab }, set: showList)
+                    )
+                    mapButton
+                }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
+    }
+
+    /// Beside the list switch, like the Map button beside the tab bar on iPhone. Shows every event
+    /// on a map in place of the event, and lit up while it does.
+    private var mapButton: some View {
+        Button { isShowingMap.toggle() } label: {
+            Image(systemName: isShowingMap ? "map.fill" : "map")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(isShowingMap ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+                .frame(width: 52, height: 52)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .glassSurface(in: Circle())
+        .keyboardShortcut("m", modifiers: [.command, .shift])
+        .help("Show every event on a map (⇧⌘M)")
+        .accessibilityLabel("Map")
+        .accessibilityAddTraits(isShowingMap ? .isSelected : [])
     }
 
     private var scanStatus: String? {
