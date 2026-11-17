@@ -14,7 +14,7 @@ struct SyncSection: View {
                 LabeledContent("iCloud", value: "Off in this build")
             }
         } header: {
-            Text("Sync")
+            Text("iCloud Sync")
         } footer: {
             Text("Flyers, events and saved photos sync through your iCloud account. Only the device that found an event adds it to your calendar, and Calendar's own sync brings it to the rest.")
                 .foregroundStyle(.secondary)

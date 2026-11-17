@@ -70,9 +70,13 @@ public enum ExtractionError: Error, Equatable, CustomStringConvertible {
 public protocol EventExtracting: Sendable {
     /// Reads one or more photos in one request. `context.codesByPhoto` lines up with `jpegs`.
     func extract(jpegs: [Data], context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage)
+    /// Whether scanning waits for an API key. Apple Intelligence needs none.
+    var needsAPIKey: Bool { get }
 }
 
 extension EventExtracting {
+    public var needsAPIKey: Bool { true }
+
     public func extract(jpeg: Data, context: PhotoContext, apiKey: String) async throws -> (ExtractionResult, TokenUsage) {
         try await extract(jpegs: [jpeg], context: context, apiKey: apiKey)
     }

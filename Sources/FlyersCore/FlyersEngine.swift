@@ -32,7 +32,8 @@ public final class FlyersEngine: ObservableObject {
     /// then, so saves don't tell it about changes. It asks for them once the apply is done.
     var isApplyingSync = false
     private let photos: PhotoSource
-    private let extractor: EventExtracting
+    /// What reads flyers: Apple Intelligence or Claude. The app switches it when you choose.
+    public var extractor: EventExtracting
     private let apiKey: () -> String?
     private let maxAttempts = 3
 
@@ -52,6 +53,13 @@ public final class FlyersEngine: ObservableObject {
         for index in self.document.events.indices where self.document.events[index].isHidden && self.document.events[index].deletedAt == nil {
             self.document.events[index].deletedAt = Date()
         }
+    }
+
+    /// The key to pass the reader, or nil when it needs one and there isn't one.
+    private func readingKey() -> String? {
+        guard extractor.needsAPIKey else { return "" }
+        guard let key = apiKey(), !key.isEmpty else { return nil }
+        return key
     }
 
     /// How long deleted events stay in the Past list to be restored.
@@ -84,7 +92,7 @@ public final class FlyersEngine: ObservableObject {
     public func scan(manual: Bool = true) async {
         guard !isScanning else { return }
         if !manual && isPaused { return }
-        guard let key = apiKey(), !key.isEmpty else {
+        guard let key = readingKey() else {
             alertMessage = "Add your API key in Settings to start scanning."
             return
         }
@@ -220,7 +228,7 @@ public final class FlyersEngine: ObservableObject {
             while isScanning { await waitForScanToEnd() }
             queuedDrops -= 1
         }
-        guard let key = apiKey(), !key.isEmpty else {
+        guard let key = readingKey() else {
             alertMessage = "Add your API key in Settings to start scanning."
             return []
         }

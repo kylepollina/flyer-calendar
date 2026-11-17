@@ -228,13 +228,6 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("API key") {
-                LabeledContent("Status", value: model.hasAPIKey ? "Saved in your Keychain" : "Not set")
-                APIKeyField(model: model)
-                if model.hasAPIKey {
-                    Button("Remove key", role: .destructive) { model.removeAPIKey() }
-                }
-            }
             Section("Calendar") {
                 if model.hasCalendarAccess {
                     CalendarPicker(model: model, engine: engine)
@@ -276,6 +269,20 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+            // Same categories, in the same order, as the iPhone's Settings.
+            Section {
+                LabeledContent("Status", value: model.hasAPIKey ? "Saved in your Keychain" : "Not set")
+                APIKeyField(model: model)
+                if model.hasAPIKey {
+                    Button("Remove key", role: .destructive) { model.removeAPIKey() }
+                }
+            } header: {
+                Text("Reading flyers")
+            } footer: {
+                Text("Flyers reads flyers with Claude, using your own Anthropic API key. It syncs to your other devices through iCloud Keychain.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section {
                 LabeledContent("This month", value: engine.spendThisMonth.formatted(.currency(code: "USD").precision(.fractionLength(2...4))))

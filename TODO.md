@@ -89,7 +89,53 @@ devices and a fake cloud in `SyncTests.swift`. `CloudSync.swift` carries the rec
 - [ ] Ask iOS for occasional background time with `BGProcessingTask`. It usually comes overnight while charging.
 - [ ] Widgets.
 
-## 6. v2 features
+## 6. Publish: free app, $3.99 once for sync
+
+Goal: anyone can download Flyers and use it with nothing to set up, and pay once to sync between
+their Mac and iPhone.
+
+### Reading flyers without an API key
+Pasting an Anthropic key is too much to ask. Anthropic has no "sign in with Claude" for other apps
+to bill against, so the options are Apple's models or a server of our own.
+
+- [x] `AppleIntelligenceReader`: reads flyers with Apple's Foundation Models (macOS 27 / iOS 27),
+      with images, filling in the same answer as the Claude reader. `flyers-check --apple` and
+      `--apple-device` try it on the samples.
+- [x] Tried the on-device model on `samples/flyers`: it finds event names but misses most dates, and
+      a long schedule overflows it. Not good enough alone.
+- [ ] Ask Apple for the Private Cloud Compute entitlement (`com.apple.developer.private-cloud-compute`).
+      Xcode can't add it automatically, so it's a request on developer.apple.com. Apple's larger
+      model runs there, free to us and the user, with a usage quota.
+- [ ] Once granted: add it to both entitlements files, run `flyers-check samples --apple` from a
+      signed build, and compare with Claude. If it's close, make it the default.
+- [ ] Settings: a "Read flyers with" choice, Apple Intelligence or Claude (your key). Hide the key
+      and spending unless Claude is chosen.
+- [ ] Fallback if Apple's model isn't good enough: our own small server holding the Claude key,
+      paid for by the purchase or a monthly scan allowance. Costs us per flyer, so price for it.
+
+### Paying for sync
+- [ ] StoreKit 2 non-consumable "Sync", $3.99, one purchase for both apps (same bundle ID, so
+      Universal Purchase). Restore Purchases in Settings.
+- [ ] Without it: everything works on one device. With it: `CloudSync` turns on.
+- [ ] Create the product in App Store Connect (yours), and a StoreKit configuration file for testing.
+
+### Setup and Settings, as a product designer would
+- [x] iPhone Settings: a short list of categories with icons and values, each opening its own page.
+      Show Setup is gone; "Finish Setting Up" appears at the top only while something's missing.
+- [x] Mac Settings: the same categories, in the same order, with the same names.
+- [ ] Setup in three steps: Calendar (choose or make one), Photos, then reading (Apple Intelligence
+      with nothing to do, or Claude with a key, tucked under "Use your own Claude key").
+- [ ] A Sync step at the end of setup that offers the purchase, skippable.
+- [ ] Explain what happens to photos in one plain line during setup (they're read, then moved into
+      Flyers), with the toggle right there.
+
+### Mac App Store
+- [ ] App Sandbox for the Mac app (needed for the Mac App Store), with the data moved into the
+      sandbox container on first launch.
+- [ ] App Store listing, screenshots, privacy details (photos sent to Anthropic or Apple), and an
+      update to `docs/`, which still mentions "Weekly schedules".
+
+## 7. v2 features
 
 - [x] Drag and drop, which also covers checking a few specific old photos
 - [ ] Share (Share menu on Mac, Share extension on iPhone)
@@ -97,7 +143,7 @@ devices and a fake cloud in `SyncTests.swift`. `CloudSync.swift` carries the rec
 - [ ] Leave-by alerts
 - [ ] Interests, to rank events by fit
 
-## 7. v3 features
+## 8. v3 features
 
 - [ ] Learn from deleted events
 - [ ] Deadline reminders, such as "RSVP by" and "tickets on sale"

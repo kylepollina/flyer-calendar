@@ -3,6 +3,7 @@
 //
 //   swift run flyers-check samples            on-device filter and QR only, nothing is sent
 //   swift run flyers-check samples --api      also calls the API, using ANTHROPIC_API_KEY
+//   swift run flyers-check samples --apple    reads them with Apple Intelligence instead
 //   swift run flyers-check burst --api --together
 //                                             sends every photo in the folder in one request, as the
 //                                             app does with photos taken moments apart
@@ -15,9 +16,14 @@ guard let folder = arguments.first(where: { !$0.hasPrefix("--") }) else {
     print("usage: flyers-check <folder> [--api] [--together]")
     exit(2)
 }
-let useAPI = arguments.contains("--api")
-let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
-if useAPI && (key ?? "").isEmpty {
+let useApple = arguments.contains("--apple") || arguments.contains("--apple-device")
+let useAPI = arguments.contains("--api") || useApple
+let key = useApple ? "" : ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
+if useApple, case .unavailable(let reason) = AppleIntelligenceReader.status {
+    print("Apple Intelligence isn't available: \(reason)")
+    exit(2)
+}
+if useAPI && !useApple && (key ?? "").isEmpty {
     print("--api needs ANTHROPIC_API_KEY")
     exit(2)
 }
@@ -51,7 +57,9 @@ let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys
     .filter { imageSuffixes.contains($0.pathExtension.lowercased()) }
     .sorted { $0.path < $1.path }
 
-let client = AnthropicClient()
+let client: EventExtracting = useApple
+    ? AppleIntelligenceReader(model: arguments.contains("--apple-device") ? .onDevice : .automatic)
+    : AnthropicClient()
 
 /// Prints what each flyer in an answer became.
 func report(_ result: ExtractionResult, takenOn: Day) -> Int {

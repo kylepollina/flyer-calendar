@@ -12,34 +12,38 @@ struct PhoneSettingsView: View {
         Binding(get: { engine.document.settings[keyPath: path] }, set: { value in engine.updateSettings { $0[keyPath: path] = value } })
     }
 
+    /// A short list of categories, each with its current value, opening a page of its own, like
+    /// iOS Settings. Setup comes back as a row at the top only while something still needs doing.
     var body: some View {
         NavigationStack {
             Form {
-                calendarSection
-                scanningSection
-                photosSection
-                Section {
-                    MapsAppPicker()
-                } header: {
-                    Text("Maps")
-                } footer: {
-                    Text("Where an event's place opens when you tap its map. Device Default uses the maps app your iPhone opens map links in.")
-                }
-                SyncSection(cloudSync: model.cloudSync)
-                keySection
-                Section("Spending") {
-                    LabeledContent("This month", value: engine.spendThisMonth.formatted(.currency(code: "USD").precision(.fractionLength(2...4))))
-                    Picker("Monthly limit", selection: binding(\.monthlySpendLimit)) {
-                        Text("$0.50").tag(0.5)
-                        Text("$1").tag(1.0)
-                        Text("$5").tag(5.0)
-                        Text("$20").tag(20.0)
+                if !model.isSetUp {
+                    Section {
+                        Button {
+                            dismiss()
+                            model.isShowingSetup = true
+                        } label: {
+                            Label("Finish Setting Up", systemImage: "exclamationmark.circle.fill")
+                                .symbolRenderingMode(.multicolor)
+                                .fontWeight(.semibold)
+                        }
+                    } footer: {
+                        Text("Flyers needs a little more before it can put events on your calendar.")
                     }
                 }
                 Section {
-                    Button("Show Setup") {
-                        dismiss()
-                        model.isShowingSetup = true
+                    page("Calendar", symbol: "calendar", color: .red, value: calendarName) { calendarSection }
+                    page("Scanning", symbol: "viewfinder", color: .blue, value: model.scansHere ? "On" : "Off") { scanningSection }
+                    page("Reading Flyers", symbol: "text.viewfinder", color: .purple, value: model.hasAPIKey ? "Claude" : "Needs a key") {
+                        keySection
+                        spendingSection
+                    }
+                }
+                Section {
+                    page("Photos", symbol: "photo.on.rectangle", color: .orange, value: savedPhotosValue) { photosSection }
+                    page("Maps", symbol: "map", color: .green, value: mapsApp.title) { mapsSection }
+                    page("iCloud Sync", symbol: "icloud", color: .cyan, value: model.cloudSync == nil ? "Off" : "On") {
+                        SyncSection(cloudSync: model.cloudSync)
                     }
                 }
             }
@@ -48,6 +52,68 @@ struct PhoneSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) }
             }
+        }
+    }
+
+    @AppStorage(MapsApp.key) private var mapsApp = MapsApp.system
+
+    /// A row with a colored icon and its current value, opening a page of settings.
+    private func page<Content: View>(
+        _ title: String, symbol: String, color: Color, value: String, @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        NavigationLink {
+            Form { content() }
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+        } label: {
+            LabeledContent {
+                Text(value)
+            } label: {
+                Label {
+                    Text(title)
+                } icon: {
+                    Image(systemName: symbol)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 29, height: 29)
+                        .background(color.gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private var calendarName: String {
+        guard model.hasCalendarAccess else { return "No access" }
+        let id = engine.document.settings.calendarID
+        return model.calendarService.writableCalendars().first { $0.id == id }?.title ?? "Not chosen"
+    }
+
+    private var savedPhotosValue: String {
+        let count = engine.savedPhotoNames.count
+        return count == 0 ? "None saved" : "\(count) saved"
+    }
+
+    private var mapsSection: some View {
+        Section {
+            MapsAppPicker()
+        } footer: {
+            Text("Where an event's place opens when you tap its map. Device Default uses the maps app your iPhone opens map links in.")
+        }
+    }
+
+    private var spendingSection: some View {
+        Section {
+            LabeledContent("This month", value: engine.spendThisMonth.formatted(.currency(code: "USD").precision(.fractionLength(2...4))))
+            Picker("Monthly limit", selection: binding(\.monthlySpendLimit)) {
+                Text("$0.50").tag(0.5)
+                Text("$1").tag(1.0)
+                Text("$5").tag(5.0)
+                Text("$20").tag(20.0)
+            }
+        } header: {
+            Text("Spending")
+        } footer: {
+            Text("Scanning pauses when the limit is reached. This is Flyers' own estimate, so check the Anthropic Console for exact billing.")
         }
     }
 
