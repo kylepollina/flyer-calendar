@@ -74,7 +74,22 @@ struct MainView: View {
                 SetupView(model: model, engine: engine)
             } else {
                 NavigationSplitView {
-                    sidebar.navigationSplitViewColumnWidth(min: 300, ideal: 350, max: 460)
+                    sidebar
+                        .navigationSplitViewColumnWidth(min: 300, ideal: 350, max: 460)
+                        // In the window's toolbar over the sidebar, in the same glass as Map and Scan now.
+                        .toolbar {
+                            ToolbarItem(placement: .navigation) {
+                                Toggle(isOn: Binding(
+                                    get: { model.isShowingSettings },
+                                    set: { showing in
+                                        if showing { model.isShowingSettings = true } else { showList(tab) }
+                                    }
+                                )) {
+                                    Label("Settings", systemImage: "gearshape").labelStyle(.titleAndIcon)
+                                }
+                                .help("Settings (⌘,)")
+                            }
+                        }
                 } detail: {
                     detail
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -291,14 +306,12 @@ struct MainView: View {
 
     // MARK: Sidebar
 
-    /// Like the iPhone: Settings as a glass button at the top, and the list switch floating at the
-    /// bottom where it's easy to reach.
+    /// Like the iPhone: the list switch floats at the bottom, where it's easy to reach. Settings is
+    /// in the toolbar above, and the last scan sits at the top of the list.
     private var sidebar: some View {
         list
             .safeAreaInset(edge: .top, spacing: 0) {
                 HStack(spacing: 10) {
-                    settingsButton
-                    Spacer(minLength: 0)
                     if let scanStatus {
                         Text(scanStatus)
                             .font(.caption)
@@ -319,21 +332,6 @@ struct MainView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
-    }
-
-    /// A glass button, filled in while the settings page is showing.
-    private var settingsButton: some View {
-        Button {
-            if model.isShowingSettings {
-                showList(tab)
-            } else {
-                model.isShowingSettings = true
-            }
-        } label: {
-            Label("Settings", systemImage: "gearshape")
-        }
-        .glassButton(prominent: model.isShowingSettings)
-        .help("Settings (⌘,)")
     }
 
     private var scanStatus: String? {
