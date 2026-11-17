@@ -65,6 +65,8 @@ struct MainView: View {
     @State private var orphanedFlyers: [Flyer] = []
     /// Events waiting for you to confirm deleting them.
     @State private var pendingDelete: [UUID] = []
+    /// Set once Settings has been opened, after which its page is kept rather than rebuilt.
+    @State private var hasOpenedSettings = false
 
     private var today: Day { .today }
 
@@ -275,7 +277,8 @@ struct MainView: View {
                     }
                 }
                 if let progress = engine.scanProgress {
-                    Notice(text: progress, tint: .secondary) {
+                    let waiting = engine.queuedDrops
+                    Notice(text: waiting == 0 ? progress : "\(progress) · \(waiting) more \(waiting == 1 ? "drop" : "drops") waiting", tint: .secondary) {
                         Button("Stop") { engine.stopScan() }.disabled(engine.isStopping)
                     }
                 }
@@ -506,10 +509,30 @@ struct MainView: View {
 
     // MARK: Detail
 
-    @ViewBuilder private var detail: some View {
-        if model.isShowingSettings {
-            SettingsView(model: model, engine: engine)
-        } else if isShowingMap {
+    /// Settings is built once, shortly after the window opens, and kept after, only shown and hidden,
+    /// so opening it is instant instead of laying out the whole form each time.
+    private var detail: some View {
+        ZStack {
+            if hasOpenedSettings || model.isShowingSettings {
+                SettingsView(model: model, engine: engine)
+                    .opacity(model.isShowingSettings ? 1 : 0)
+                    .allowsHitTesting(model.isShowingSettings)
+                    .accessibilityHidden(!model.isShowingSettings)
+            }
+            if !model.isShowingSettings { page }
+        }
+        .onChange(of: model.isShowingSettings) {
+            if model.isShowingSettings { hasOpenedSettings = true }
+        }
+        // Built quietly once the window has settled, so even the first click is instant.
+        .task {
+            try? await Task.sleep(for: .seconds(1))
+            hasOpenedSettings = true
+        }
+    }
+
+    @ViewBuilder private var page: some View {
+        if isShowingMap {
             EventsMap(engine: engine, thumbnail: { thumbnail(engine.flyer(id: $0.flyerID)) }) { reveal($0) }
         } else if let flyerID = photoEventsFlyerID {
             PhotoEventsPage(

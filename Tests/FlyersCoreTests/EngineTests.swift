@@ -103,14 +103,14 @@ private final class FakeExtractor: EventExtracting, @unchecked Sendable {
 }
 
 /// A QR-free image that Vision reads as flyer text.
-private func textImage() -> Data {
+private func textImage(_ text: String = "Chess Club Sat Nov 14 at 6pm") -> Data {
     let context = CGContext(
         data: nil, width: 1000, height: 400, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
     )!
     context.setFillColor(CGColor(gray: 1, alpha: 1))
     context.fill(CGRect(x: 0, y: 0, width: 1000, height: 400))
-    let line = NSAttributedStringMaker.make("Chess Club Sat Nov 14 at 6pm")
+    let line = NSAttributedStringMaker.make(text)
     let ctLine = CTLineCreateWithAttributedString(line)
     context.textPosition = CGPoint(x: 40, y: 180)
     CTLineDraw(ctLine, context)
@@ -842,6 +842,25 @@ private func blankImage(_ gray: CGFloat) -> Data {
         #expect(fake.deleted.isEmpty)
         #expect(engine.flyersOnlyInLibrary.isEmpty)
         #expect(engine.dropSummary == "From your drop: 1 new event")
+    }
+
+    @Test func aDropDuringAScanWaitsItsTurn() async {
+        let extractor = FakeExtractor { flyer() }
+        let (engine, _) = engine(extractor)
+        var second: Task<[UUID], Never>?
+        // While the first drop is being read, drop another.
+        extractor.onCall = {
+            guard second == nil else { return }
+            second = Task { await engine.scanDropped([DroppedPhoto(data: textImage("Book Swap Sun Nov 15 at 2pm"), takenAt: nil)]) }
+        }
+        let first = await engine.scanDropped([DroppedPhoto(data: textImage(), takenAt: nil)])
+        #expect(engine.queuedDrops == 1)
+        _ = await second?.value
+        #expect(first.count == 1)
+        // The second image was read too, once the first drop was done.
+        #expect(extractor.calls == 2)
+        #expect(engine.queuedDrops == 0)
+        #expect(engine.alertMessage == nil)
     }
 
     @Test func theSameImageDroppedTwiceIsOnlyPaidForOnce() async {

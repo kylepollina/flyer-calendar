@@ -183,7 +183,10 @@ final class AppModel: ObservableObject {
         activeObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.cloudSync?.fetchNow() }
+            Task { @MainActor in
+                self?.refreshLaunchAtLogin()
+                await self?.cloudSync?.fetchNow()
+            }
         }
         engine.reconcileWithCalendar()
         engine.addAppLinksIfNeeded()
@@ -256,7 +259,14 @@ final class AppModel: ObservableObject {
         hasAPIKey = false
     }
 
-    var launchesAtLogin: Bool { SMAppService.mainApp.status == .enabled }
+    /// Asking the system costs a round trip, which made Settings slow to open when every redraw
+    /// asked. Read once, then again when you change it or come back to Flyers.
+    @Published private(set) var launchesAtLogin = SMAppService.mainApp.status == .enabled
+
+    func refreshLaunchAtLogin() {
+        let enabled = SMAppService.mainApp.status == .enabled
+        if enabled != launchesAtLogin { launchesAtLogin = enabled }
+    }
 
     func setLaunchAtLogin(_ enabled: Bool) {
         do {
@@ -269,7 +279,7 @@ final class AppModel: ObservableObject {
         } catch {
             launchAtLoginError = "macOS wouldn't change this: \(error.localizedDescription)"
         }
-        objectWillChange.send()
+        refreshLaunchAtLogin()
     }
 }
 

@@ -15,6 +15,10 @@ public final class FlyersEngine: ObservableObject {
     @Published public private(set) var alertMessage: String?
     /// What the last drop found, until you dismiss it.
     @Published public private(set) var dropSummary: String?
+    /// Drops waiting for the scan running now. Each starts when the one before it is done.
+    @Published public private(set) var queuedDrops = 0
+    /// Drops and anything else waiting for the current scan to end.
+    private var scanWaiters: [CheckedContinuation<Void, Never>] = []
     /// The events the last delete removed, for Undo.
     @Published public private(set) var lastDeletedIDs: [UUID] = []
 
@@ -91,6 +95,7 @@ public final class FlyersEngine: ObservableObject {
             isScanning = false
             isStopping = false
             scanProgress = nil
+            scanEnded()
         }
         // What other devices have read and claimed since last time.
         if let sync { await sync.fetchNow() }
@@ -208,9 +213,12 @@ public final class FlyersEngine: ObservableObject {
     @discardableResult
     public func scanDropped(_ dropped: [DroppedPhoto]) async -> [UUID] {
         guard !dropped.isEmpty else { return [] }
-        guard !isScanning else {
-            alertMessage = "A scan is running. Drop the photos again when it's done."
-            return []
+        // A drop during a scan waits its turn rather than being turned away. Drops run in the
+        // order they came.
+        if isScanning {
+            queuedDrops += 1
+            while isScanning { await waitForScanToEnd() }
+            queuedDrops -= 1
         }
         guard let key = apiKey(), !key.isEmpty else {
             alertMessage = "Add your API key in Settings to start scanning."
@@ -223,6 +231,7 @@ public final class FlyersEngine: ObservableObject {
             isScanning = false
             isStopping = false
             scanProgress = nil
+            scanEnded()
         }
 
         var originals: [String: Data] = [:]
@@ -276,6 +285,17 @@ public final class FlyersEngine: ObservableObject {
         dropSummary = "From your drop: " + parts.joined(separator: ", ")
         persist()
         return document.events.map(\.id).filter { !before.contains($0) }
+    }
+
+    private func waitForScanToEnd() async {
+        await withCheckedContinuation { scanWaiters.append($0) }
+    }
+
+    /// Lets waiting drops go. The first to run starts its scan, and the rest wait again.
+    private func scanEnded() {
+        let waiting = scanWaiters
+        scanWaiters = []
+        for waiter in waiting { waiter.resume() }
     }
 
     /// Stops after the current photo, whose request may already be paid for. Stays paused
