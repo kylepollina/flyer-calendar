@@ -291,38 +291,38 @@ struct MainView: View {
 
     // MARK: Sidebar
 
+    /// Like the iPhone: Settings as a glass button at the top, and the list switch floating at the
+    /// bottom where it's easy to reach.
     private var sidebar: some View {
         list
             .safeAreaInset(edge: .top, spacing: 0) {
-                GlassTabs(
-                    items: [(ListTab.upcoming, "calendar"), (ListTab.past, "clock")],
-                    selection: Binding(get: { tab }, set: showList)
-                )
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(alignment: .leading, spacing: 6) {
-                    settingsRow
+                HStack(spacing: 10) {
+                    settingsButton
+                    Spacer(minLength: 0)
                     if let scanStatus {
                         Text(scanStatus)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .padding(.horizontal, 12)
+                            .truncationMode(.middle)
+                            .help(scanStatus)
                     }
                 }
                 .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                GlassTabs(
+                    items: [(ListTab.upcoming, "calendar"), (ListTab.past, "clock")],
+                    selection: Binding(get: { tab }, set: showList)
+                )
+                .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // A solid footer, so rows scrolling under it never show through.
-                .background(Color(nsColor: .windowBackgroundColor))
-                .overlay(alignment: .top) { Divider() }
             }
     }
 
-    /// Pinned below the list, and highlighted like a selected row while its page is showing.
-    private var settingsRow: some View {
+    /// A glass button, filled in while the settings page is showing.
+    private var settingsButton: some View {
         Button {
             if model.isShowingSettings {
                 showList(tab)
@@ -331,18 +331,8 @@ struct MainView: View {
             }
         } label: {
             Label("Settings", systemImage: "gearshape")
-                .fontWeight(.medium)
-                .foregroundStyle(model.isShowingSettings ? .white : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    model.isShowingSettings ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .glassButton(prominent: model.isShowingSettings)
         .help("Settings (⌘,)")
     }
 
