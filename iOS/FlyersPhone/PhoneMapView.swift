@@ -44,8 +44,8 @@ struct PhoneMapView: View {
     @State private var locationManager = CLLocationManager()
     /// Where you are, kept current while the map is open.
     @State private var userLocation: CLLocation?
-    /// Counts camera moves, so the dot drawn over the map redraws as it pans.
-    @State private var cameraMoves = 0
+    /// True while the map moves, which is when the dot drawn over it has to follow frame by frame.
+    @State private var isCameraMoving = false
     /// Where you were looking, kept across opening an event, switching tabs and relaunching.
     @AppStorage("map.region") private var savedRegion = ""
     private let today = Day.today
@@ -106,15 +106,17 @@ struct PhoneMapView: View {
                     .annotationTitles(.hidden)
                 }
             }
-            // Keeps your dot in step with the map while it moves.
-            .onMapCameraChange(frequency: .continuous) { cameraMoves += 1 }
+            .onMapCameraChange(frequency: .continuous) { isCameraMoving = true }
             // You, drawn over the map rather than in it, since MapKit stacks its own pins however it
-            // likes. This way the dot is always on top of the events.
+            // likes. This way the dot is always on top of the events. While the map moves it's
+            // placed again every frame from the map's live position, so it stays locked in place.
             .overlay {
-                if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
-                    let _ = cameraMoves
-                    YouAreHere().position(spot)
+                TimelineView(.animation(paused: !isCameraMoving)) { _ in
+                    if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
+                        YouAreHere().position(spot)
+                    }
                 }
+                .allowsHitTesting(false)
             }
             }
             .mapControls { MapCompass() }
@@ -130,6 +132,7 @@ struct PhoneMapView: View {
             }
             .onGeometryChange(for: CGSize.self, of: \.size) { mapSize = $0 }
             .onMapCameraChange(frequency: .onEnd) { context in
+                isCameraMoving = false
                 savedRegion = MapLook.encode(context.region)
                 viewport = MapGrouping.Viewport(
                     centerLatitude: context.region.center.latitude, centerLongitude: context.region.center.longitude,
@@ -310,10 +313,10 @@ private struct PhotoPin: View {
                 if count > 1 {
                     // Several events: just how many, big. Zoom in and they split into photos.
                     Text("\(count)")
-                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .font(.system(size: 19, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.white)
-                        .frame(width: size, height: size)
+                        .frame(width: 42, height: 42)
                         .background(Color.accentColor, in: Circle())
                         .overlay { Circle().strokeBorder(.white, lineWidth: 3) }
                 } else {

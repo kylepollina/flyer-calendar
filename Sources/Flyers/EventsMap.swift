@@ -28,8 +28,8 @@ struct EventsMap: View {
     /// Asks once to show where you are. Kept here so the request isn't dropped.
     @State private var locationManager = CLLocationManager()
     @State private var userLocation: CLLocation?
-    /// Counts camera moves, so the dot drawn over the map redraws as it pans.
-    @State private var cameraMoves = 0
+    /// True while the map moves, which is when the dot drawn over it has to follow frame by frame.
+    @State private var isCameraMoving = false
     private let today = Day.today
 
     private var located: [FlyerEvent] {
@@ -69,13 +69,17 @@ struct EventsMap: View {
                 }
             }
         }
-        .onMapCameraChange(frequency: .continuous) { cameraMoves += 1 }
-        // You, drawn over the map rather than in it, so you're never under a pin.
+        .onMapCameraChange(frequency: .continuous) { isCameraMoving = true }
+        .onMapCameraChange(frequency: .onEnd) { isCameraMoving = false }
+        // You, drawn over the map rather than in it, so you're never under a pin. Placed again every
+        // frame while the map moves, so it stays locked in place.
         .overlay {
-            if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
-                let _ = cameraMoves
-                YouAreHere().position(spot)
+            TimelineView(.animation(paused: !isCameraMoving)) { _ in
+                if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
+                    YouAreHere().position(spot)
+                }
             }
+            .allowsHitTesting(false)
         }
         }
         .onAppear {
