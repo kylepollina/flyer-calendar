@@ -78,7 +78,7 @@ struct MainView: View {
                         .navigationSplitViewColumnWidth(min: 300, ideal: 350, max: 460)
                         // In the window's toolbar over the sidebar, in the same glass as Map and Scan now.
                         .toolbar {
-                            ToolbarItem(placement: .navigation) {
+                            ToolbarItem(placement: .automatic) {
                                 Toggle(isOn: Binding(
                                     get: { model.isShowingSettings },
                                     set: { showing in
