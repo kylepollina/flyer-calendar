@@ -601,6 +601,15 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(engine.document.events[0].calendarItemID == "renumbered")
     }
 
+    @Test func newEventsStayHighlightedUntilOpened() async {
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
+        await engine.scan()
+        let id = engine.document.events[0].id
+        #expect(engine.event(id: id)?.isUnseen == true)
+        engine.markSeen(id)
+        #expect(engine.event(id: id)?.isUnseen == false)
+    }
+
     @Test func deletedEventsLeaveThePastListAfter30DaysButStayDeleted() async {
         let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
         await engine.scan()

@@ -723,6 +723,13 @@ public final class FlyersEngine: ObservableObject {
             .sorted { ($0.deletedAt ?? now) > ($1.deletedAt ?? now) }
     }
 
+    /// You opened the event, so it's no longer highlighted as new.
+    public func markSeen(_ id: UUID) {
+        guard event(id: id)?.isUnseen == true else { return }
+        change(id) { $0.isNew = nil }
+        persist()
+    }
+
     /// Restores one event from a swipe. Waits for the swipe to finish closing before the event
     /// moves out of Recently Deleted, so the two animations don't fight and swap rows around.
     public func restoreAfterSwipe(_ id: UUID) {

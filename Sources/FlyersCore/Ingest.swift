@@ -52,6 +52,7 @@ public enum Ingest {
                 sponsors: sponsors.isEmpty ? nil : sponsors
             )
             event.problems = problems(in: extracted, startDay: startDay)
+            event.isNew = true
 
             // Everything else goes straight to the calendar. Problems, and a reading the model was
             // unsure of, show as a note on the event rather than holding it back.

@@ -15,6 +15,8 @@ struct EventDetailView: View {
     var body: some View {
         if let event = engine.event(id: eventID) {
             content(event)
+                // Opening it is reading it.
+                .onAppear { engine.markSeen(eventID) }
                 // Deleting the event you're looking at closes its page. A deleted event opened
                 // from Past stays open, to restore it.
                 .onChange(of: event.isHidden) { wasHidden, isHidden in

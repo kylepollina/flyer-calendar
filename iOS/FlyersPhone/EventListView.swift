@@ -149,6 +149,8 @@ struct EventListView: View {
         NavigationLink(value: PhoneRoute.event(event.id)) {
             EventRow(event: event, day: day, thumbnail: model.thumbnail(engine.flyer(id: event.flyerID)))
         }
+        // A soft green wash on events you haven't opened yet, like unread messages.
+        .listRowBackground(event.isUnseen ? Color.green.opacity(0.14) : nil)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) { model.requestDelete([event.id]) } label: { Label("Delete", systemImage: "trash") }
         }

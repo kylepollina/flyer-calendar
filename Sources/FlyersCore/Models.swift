@@ -168,6 +168,12 @@ public struct FlyerEvent: Codable, Identifiable, Equatable, Sendable {
     public var stateBeforeDelete: EventState?
     /// When it was deleted here or left Calendar. The Past list shows it for 30 days after.
     public var deletedAt: Date?
+    /// True for an event found by a scan that you haven't opened yet, which the lists highlight
+    /// like an unread message. Nil, as for events from before this existed, means seen. Syncs, so
+    /// opening it on one device clears it on the others.
+    public var isNew: Bool?
+
+    public var isUnseen: Bool { isNew == true }
     public var calendarItemID: String?
     /// Calendar's cross-device ID, used to find the event again if `calendarItemID` changes.
     public var calendarExternalID: String?

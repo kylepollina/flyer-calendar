@@ -442,6 +442,12 @@ struct MainView: View {
             showsThumbnail: showsThumbnail
         )
         .tag(event.id)
+        // A soft green wash on events you haven't opened yet, like unread messages.
+        .listRowBackground(
+            event.isUnseen
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.green.opacity(0.14)).padding(.horizontal, 6)
+                : nil
+        )
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) { delete([event.id]) } label: { Label("Delete", systemImage: "trash") }
         }
@@ -556,6 +562,8 @@ struct MainView: View {
                 onDelete: delete
             )
             .id(event.id)
+            // Opening it is reading it.
+            .onAppear { engine.markSeen(event.id) }
         } else if firstRowID(in: tab) != nil {
             ContentUnavailableView("Select an event", systemImage: "photo.on.rectangle.angled")
         } else {
