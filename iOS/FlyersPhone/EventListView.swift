@@ -97,15 +97,9 @@ struct EventListView: View {
                         Section {
                             ForEach(hidden) { hiddenRow($0) }
                         } header: {
-                            HStack {
-                                Text("Deleted")
-                                Spacer()
-                                Button("Restore All") { engine.restore(hidden.map(\.id)) }
-                                    .font(.subheadline)
-                                    .textCase(nil)
-                            }
+                            Text("Recently Deleted")
                         } footer: {
-                            Text("Deleted events stay here, so a rescan can't bring them back. Swipe one to restore it.")
+                            Text("Swipe one to restore it, or open it. Deleted events leave this list after 30 days.")
                         }
                     }
                     bottomSpace
@@ -150,12 +144,15 @@ struct EventListView: View {
         }
     }
 
+    /// Tap to open its page, which has Restore, or swipe left to restore it here.
     private func hiddenRow(_ event: FlyerEvent) -> some View {
-        EventRow(
-            event: event, day: event.startDay, thumbnail: model.thumbnail(engine.flyer(id: event.flyerID)),
-            note: event.state == .removedInCalendar ? "Removed in Calendar" : "Deleted in Flyers"
-        )
-        .opacity(0.6)
+        NavigationLink(value: event.id) {
+            EventRow(
+                event: event, day: event.startDay, thumbnail: model.thumbnail(engine.flyer(id: event.flyerID)),
+                note: event.state == .removedInCalendar ? "Removed in Calendar" : "Deleted in Flyers"
+            )
+            .opacity(0.6)
+        }
         // Swiping left shows Restore on the right, where Delete sits on other rows.
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button { engine.restore([event.id]) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }

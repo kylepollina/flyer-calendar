@@ -372,15 +372,8 @@ struct MainView: View {
                     if !hidden.isEmpty {
                         // Deleted events stay in the library, so a rescan can't bring them back.
                         // Here you can bring them back yourself.
-                        Section {
+                        Section("Recently Deleted") {
                             ForEach(hidden) { hiddenRow($0) }
-                        } header: {
-                            HStack {
-                                Text("Deleted")
-                                Spacer()
-                                Button("Restore All") { engine.restore(hidden.map(\.id)) }
-                                    .buttonStyle(.borderless)
-                            }
                         }
                     }
                 }
@@ -410,13 +403,12 @@ struct MainView: View {
                 status: nil
             )
             .opacity(0.6)
-            Button("Restore") { engine.restore([event.id]) }
-                .help(event.state == .removedInCalendar
-                    ? "Bring it back to Flyers. Use Add to Calendar if it's no longer on your calendar."
-                    : "Bring it back, and onto your calendar if it was there")
         }
-        // Not selectable, since there's no page for a deleted event.
-        .selectionDisabled()
+        // Click to open its page, which has Restore. Or swipe left, or Control-click.
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button { engine.restore([event.id]) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
+                .tint(.blue)
+        }
         .contextMenu {
             Button("Restore") { engine.restore([event.id]) }
         }
@@ -496,7 +488,7 @@ struct MainView: View {
     }
 
     private func deleteSelection() {
-        guard let selection, engine.event(id: selection) != nil else { return }
+        guard let selection, let event = engine.event(id: selection), !event.isHidden else { return }
         delete([selection])
     }
 
@@ -519,7 +511,7 @@ struct MainView: View {
                 onBack: { photoEventsFlyerID = nil },
                 onDelete: delete
             )
-        } else if let selection, let event = engine.event(id: selection), !event.isHidden {
+        } else if let selection, let event = engine.event(id: selection) {
             EventDetail(
                 engine: engine, event: event, thumbnail: thumbnail(engine.flyer(id: event.flyerID)),
                 onViewPhoto: { viewPhoto(of: engine.flyer(id: event.flyerID)) },
@@ -796,6 +788,30 @@ struct EventDetail: View {
     private var actions: some View {
         GlassGroup {
             HStack(spacing: 8) {
+                if event.isHidden {
+                    // A deleted event's page only offers to bring it back.
+                    Button { engine.restore([event.id]) } label: {
+                        Label("Restore", systemImage: "arrow.uturn.backward")
+                    }
+                    .glassButton(prominent: true)
+                    .help(event.state == .removedInCalendar
+                        ? "Bring it back to Flyers. Use Add to Calendar if it's no longer on your calendar."
+                        : "Bring it back, and onto your calendar if it was there")
+                    Button(action: onViewPhoto) {
+                        Label("View photo", systemImage: "photo").labelStyle(.iconOnly)
+                    }
+                    .glassButton()
+                    .help("View the full photo")
+                } else {
+                    liveActions
+                }
+            }
+            .controlSize(.large)
+        }
+    }
+
+    /// Everything you can do with an event that isn't deleted.
+    @ViewBuilder private var liveActions: some View {
                 if event.state == .needsReview || event.state == .available {
                     Button { engine.addToCalendar(event.id) } label: {
                         Label("Add to Calendar", systemImage: "calendar.badge.plus")
@@ -832,9 +848,6 @@ struct EventDetail: View {
                 }
                 .glassButton()
                 .help("Delete")
-            }
-            .controlSize(.large)
-        }
     }
 
     @ViewBuilder private var facts: some View {
@@ -914,6 +927,7 @@ struct EventDetail: View {
         case .onCalendar: return "checkmark.circle.fill"
         case .queued: return "clock"
         case .needsReview: return "exclamationmark.circle"
+        case .deleted, .removedInCalendar: return "trash"
         default: return "calendar"
         }
     }
@@ -923,6 +937,8 @@ struct EventDetail: View {
         case .onCalendar: return "On your calendar"
         case .queued: return "Waiting for a calendar"
         case .needsReview: return "Waiting for you to check it"
+        case .deleted: return "Deleted. Restore it to bring it back."
+        case .removedInCalendar: return "Removed in Calendar. Restore it to bring it back."
         default: return "Not on your calendar"
         }
     }

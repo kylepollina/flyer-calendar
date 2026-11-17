@@ -44,6 +44,8 @@ struct PhoneMapView: View {
     @State private var locationManager = CLLocationManager()
     /// Where you are, kept current while the map is open.
     @State private var userLocation: CLLocation?
+    /// Counts camera moves, so the dot drawn over the map redraws as it pans.
+    @State private var cameraMoves = 0
     /// Where you were looking, kept across opening an event, switching tabs and relaunching.
     @AppStorage("map.region") private var savedRegion = ""
     private let today = Day.today
@@ -80,6 +82,7 @@ struct PhoneMapView: View {
     var body: some View {
         let pins = pins
         NavigationStack(path: $path) {
+            MapReader { proxy in
             Map(position: $position) {
                 // How sure the phone is of where you are, as a soft blue circle under everything.
                 if let userLocation, userLocation.horizontalAccuracy > 0 {
@@ -102,11 +105,17 @@ struct PhoneMapView: View {
                     // The pin draws its own name, under its point.
                     .annotationTitles(.hidden)
                 }
-                // Drawn after the pins, so you're never hidden under one.
-                if let userLocation {
-                    Annotation("My Location", coordinate: userLocation.coordinate) { YouAreHere() }
-                        .annotationTitles(.hidden)
+            }
+            // Keeps your dot in step with the map while it moves.
+            .onMapCameraChange(frequency: .continuous) { cameraMoves += 1 }
+            // You, drawn over the map rather than in it, since MapKit stacks its own pins however it
+            // likes. This way the dot is always on top of the events.
+            .overlay {
+                if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
+                    let _ = cameraMoves
+                    YouAreHere().position(spot)
                 }
+            }
             }
             .mapControls { MapCompass() }
             // Tapping anywhere else on the map closes an open pin's card. A tap on a pin can reach
@@ -277,7 +286,7 @@ enum MapLook {
 
 /// A pin made of the flyer's photo, cropped square, with a point under it marking the spot and
 /// the name under that. The name hangs below without changing the pin's size, so the point stays
-/// on the place. A number in the corner counts the events it holds.
+/// on the place. A pin holding several events shows just their number in a circle instead.
 private struct PhotoPin: View {
     let title: String
     let image: UIImage?
@@ -290,11 +299,21 @@ private struct PhotoPin: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 0) {
-                photo
-                    .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white, lineWidth: 3) }
-                    .overlay(alignment: .topTrailing) { countBadge }
+                if count > 1 {
+                    // Several events: just how many, big. Zoom in and they split into photos.
+                    Text("\(count)")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .frame(width: size, height: size)
+                        .background(Color.accentColor, in: Circle())
+                        .overlay { Circle().strokeBorder(.white, lineWidth: 3) }
+                } else {
+                    photo
+                        .frame(width: size, height: size)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white, lineWidth: 3) }
+                }
                 Image(systemName: "triangle.fill")
                     .font(.system(size: 12))
                     .foregroundStyle(.white)
@@ -321,19 +340,6 @@ private struct PhotoPin: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.accentColor)
-        }
-    }
-
-    @ViewBuilder private var countBadge: some View {
-        if count > 1 {
-            Text("\(count)")
-                .font(.caption.weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(.white)
-                .frame(minWidth: 22, minHeight: 22)
-                .background(Color.accentColor, in: Circle())
-                .overlay { Circle().strokeBorder(.white, lineWidth: 2) }
-                .offset(x: 8, y: -8)
         }
     }
 

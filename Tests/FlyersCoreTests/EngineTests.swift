@@ -601,6 +601,22 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(engine.document.events[0].calendarItemID == "renumbered")
     }
 
+    @Test func deletedEventsLeaveThePastListAfter30DaysButStayDeleted() async {
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
+        await engine.scan()
+        let id = engine.document.events[0].id
+        engine.delete([id])
+        let deletedAt = try! #require(engine.event(id: id)?.deletedAt)
+
+        #expect(engine.recentlyDeleted(now: deletedAt.addingTimeInterval(29 * 24 * 3600)).map(\.id) == [id])
+        #expect(engine.recentlyDeleted(now: deletedAt.addingTimeInterval(31 * 24 * 3600)).isEmpty)
+        // The record stays, so the same event read again doesn't come back.
+        #expect(engine.event(id: id)?.state == .deleted)
+
+        engine.restore([id])
+        #expect(engine.event(id: id)?.deletedAt == nil)
+    }
+
     @Test func hiddenEventsCanBeRestored() async {
         let calendar = FakeCalendar()
         let extractor = FakeExtractor {

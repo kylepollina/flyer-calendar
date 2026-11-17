@@ -166,6 +166,8 @@ public struct FlyerEvent: Codable, Identifiable, Equatable, Sendable {
     public var state: EventState
     /// What to go back to on Undo.
     public var stateBeforeDelete: EventState?
+    /// When it was deleted here or left Calendar. The Past list shows it for 30 days after.
+    public var deletedAt: Date?
     public var calendarItemID: String?
     /// Calendar's cross-device ID, used to find the event again if `calendarItemID` changes.
     public var calendarExternalID: String?

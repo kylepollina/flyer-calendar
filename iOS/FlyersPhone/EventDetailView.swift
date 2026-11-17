@@ -13,11 +13,15 @@ struct EventDetailView: View {
     @State private var pendingLink: URL?
 
     var body: some View {
-        if let event = engine.event(id: eventID), !event.isHidden {
+        if let event = engine.event(id: eventID) {
             content(event)
+                // Deleting the event you're looking at closes its page. A deleted event opened
+                // from Past stays open, to restore it.
+                .onChange(of: event.isHidden) { wasHidden, isHidden in
+                    if isHidden && !wasHidden { dismiss() }
+                }
         } else {
             ContentUnavailableView("Event deleted", systemImage: "trash")
-                .onAppear { dismiss() }
         }
     }
 
@@ -121,7 +125,12 @@ struct EventDetailView: View {
     private func actions(_ event: FlyerEvent) -> some View {
         GlassGroup {
             HStack(spacing: 10) {
-                if event.state == .needsReview || event.state == .available {
+                if event.isHidden {
+                    Button { engine.restore([event.id]) } label: {
+                        Label("Restore", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity)
+                    }
+                    .glassButton(prominent: true)
+                } else if event.state == .needsReview || event.state == .available {
                     Button { engine.addToCalendar(event.id) } label: {
                         Label("Add to Calendar", systemImage: "calendar.badge.plus").frame(maxWidth: .infinity)
                     }
@@ -134,14 +143,16 @@ struct EventDetailView: View {
                 } else {
                     Spacer()
                 }
-                Button { isEditing = true } label: {
-                    Text("Edit")
+                if !event.isHidden {
+                    Button { isEditing = true } label: {
+                        Text("Edit")
+                    }
+                    .glassButton()
+                    Button(role: .destructive) { delete([event.id]) } label: {
+                        Label("Delete", systemImage: "trash").labelStyle(.iconOnly).foregroundStyle(.red)
+                    }
+                    .glassButton()
                 }
-                .glassButton()
-                Button(role: .destructive) { delete([event.id]) } label: {
-                    Label("Delete", systemImage: "trash").labelStyle(.iconOnly).foregroundStyle(.red)
-                }
-                .glassButton()
             }
             .controlSize(.large)
             .lineLimit(1)
@@ -158,8 +169,12 @@ struct EventDetailView: View {
                     Task { await engine.removeFromLibrary(flyerID: flyer.id) }
                 }
             }
-            Divider()
-            Button("Delete", systemImage: "trash", role: .destructive) { delete([event.id]) }
+            if event.isHidden {
+                Button("Restore", systemImage: "arrow.uturn.backward") { engine.restore([event.id]) }
+            } else {
+                Divider()
+                Button("Delete", systemImage: "trash", role: .destructive) { delete([event.id]) }
+            }
         } label: {
             Label("More", systemImage: "ellipsis")
         }
@@ -237,6 +252,7 @@ struct EventDetailView: View {
         case .onCalendar: return "checkmark.circle.fill"
         case .queued: return "clock"
         case .needsReview: return "exclamationmark.circle"
+        case .deleted, .removedInCalendar: return "trash"
         default: return "calendar"
         }
     }
@@ -246,6 +262,8 @@ struct EventDetailView: View {
         case .onCalendar: return "On your calendar"
         case .queued: return "Waiting for a calendar"
         case .needsReview: return "Waiting for you to check it"
+        case .deleted: return "Deleted. Restore it to bring it back."
+        case .removedInCalendar: return "Removed in Calendar. Restore it to bring it back."
         default: return "Not on your calendar"
         }
     }

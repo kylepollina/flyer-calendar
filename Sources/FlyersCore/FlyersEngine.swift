@@ -44,7 +44,14 @@ public final class FlyersEngine: ObservableObject {
         self.calendar = calendar
         self.apiKey = apiKey
         self.document = document ?? store.load()
+        // Events deleted before deletion dates were kept start their 30 days now.
+        for index in self.document.events.indices where self.document.events[index].isHidden && self.document.events[index].deletedAt == nil {
+            self.document.events[index].deletedAt = Date()
+        }
     }
+
+    /// How long deleted events stay in the Past list to be restored.
+    public static let deletedKeptFor: TimeInterval = 30 * 24 * 60 * 60
 
     // MARK: Lookups
 
@@ -636,6 +643,7 @@ public final class FlyersEngine: ObservableObject {
             change(id) {
                 $0.stateBeforeDelete = $0.state
                 $0.state = .deleted
+                $0.deletedAt = Date()
                 $0.calendarItemID = nil
             }
             removed.append(id)
@@ -664,6 +672,7 @@ public final class FlyersEngine: ObservableObject {
                 let previous = $0.stateBeforeDelete ?? .available
                 $0.state = previous == .onCalendar ? .queued : previous
                 $0.stateBeforeDelete = nil
+                $0.deletedAt = nil
                 if $0.state == .queued { $0.ownerDevice = deviceID }
             }
         }
@@ -674,9 +683,16 @@ public final class FlyersEngine: ObservableObject {
 
     public func dismissUndo() { lastDeletedIDs = [] }
 
-    /// Events you deleted here or that left Calendar, newest first, so they can be brought back.
-    public var hiddenEvents: [FlyerEvent] {
-        document.events.filter(\.isHidden).sorted { ($0.startDay?.number ?? 0) > ($1.startDay?.number ?? 0) }
+    /// Events you deleted here or that left Calendar in the last 30 days, most recently deleted
+    /// first, so they can be brought back.
+    public var hiddenEvents: [FlyerEvent] { recentlyDeleted() }
+
+    /// Older ones drop off the list. Their records stay, so a rescan or another device can't bring
+    /// them back.
+    public func recentlyDeleted(now: Date = Date()) -> [FlyerEvent] {
+        document.events
+            .filter { $0.isHidden && now.timeIntervalSince($0.deletedAt ?? now) < FlyersEngine.deletedKeptFor }
+            .sorted { ($0.deletedAt ?? now) > ($1.deletedAt ?? now) }
     }
 
     /// Brings hidden events back. One deleted here goes back where it was. One that left Calendar
@@ -696,6 +712,7 @@ public final class FlyersEngine: ObservableObject {
                 }
                 $0.stateBeforeDelete = nil
                 $0.missingFromCalendarSince = nil
+                $0.deletedAt = nil
             }
         }
         flushQueue()
@@ -745,6 +762,7 @@ public final class FlyersEngine: ObservableObject {
                 if let since = event.missingFromCalendarSince {
                     if now.timeIntervalSince(since) >= FlyersEngine.missingGracePeriod {
                         document.events[index].state = .removedInCalendar
+                        document.events[index].deletedAt = now
                         document.events[index].calendarItemID = nil
                         document.events[index].missingFromCalendarSince = nil
                         changed = true
