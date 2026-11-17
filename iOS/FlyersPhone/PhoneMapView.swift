@@ -164,19 +164,20 @@ struct PhoneMapView: View {
             // where your thumb already is, with an open pin's card under it.
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .trailing, spacing: 10) {
-                    // The same size as the tab bar's Map button, 16 points in like it, so the two
-                    // share a center line, with a gap above it.
+                    // Centered over the tab bar's Map button: that button is about 61 points across
+                    // with 22 points to the screen's edge, so its center is 52 points in. A 52-point
+                    // button 26 points in shares that center line.
                     Button(action: centerOnYou) {
                         Image(systemName: "location.fill")
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(.system(size: 19, weight: .semibold))
                             .foregroundStyle(.primary)
-                            .frame(width: 48, height: 48)
+                            .frame(width: 52, height: 52)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .glassSurface(in: Circle())
                     .accessibilityLabel("Show My Location")
-                    .padding(.trailing, 16)
+                    .padding(.trailing, 26)
                     .padding(.bottom, 14)
                     if let pin = pins.first(where: isSelected) { pinCard(pin) }
                 }
