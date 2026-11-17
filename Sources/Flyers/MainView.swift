@@ -85,7 +85,10 @@ struct MainView: View {
                                         if showing { model.isShowingSettings = true } else { showList(tab) }
                                     }
                                 )) {
-                                    Label("Settings", systemImage: "gearshape").labelStyle(.titleAndIcon)
+                                    Label("Settings", systemImage: "gearshape")
+                                        .labelStyle(.titleAndIcon)
+                                        // Room between the words and the glass edge.
+                                        .padding(.horizontal, 6)
                                 }
                                 .help("Settings (⌘,)")
                             }
