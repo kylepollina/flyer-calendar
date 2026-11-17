@@ -106,6 +106,8 @@ struct EventsMap: View {
                     .annotationTitles(.hidden)
             }
         }
+        // No built-in compass or zoom buttons, as on the iPhone. Scroll or pinch to zoom.
+        .mapControls {}
         // Clicking anywhere else on the map closes an open pin's card.
         .onTapGesture {
             guard !selectedEvents.isEmpty else { return }

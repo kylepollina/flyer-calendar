@@ -108,7 +108,8 @@ struct PhoneMapView: View {
                         .annotationTitles(.hidden)
                 }
             }
-            .mapControls { MapCompass() }
+            // No built-in controls: pinch to zoom, and the location button stands alone.
+            .mapControls {}
             // Tapping anywhere else on the map closes an open pin's card. A tap on a pin can reach
             // the map too, so this waits a moment and leaves it be if a pin just took it.
             .onTapGesture {
@@ -152,7 +153,9 @@ struct PhoneMapView: View {
             }
             // The location button sits at the right edge just above the Map button in the tab bar,
             // where your thumb already is, with an open pin's card under it.
-            .safeAreaInset(edge: .bottom) {
+            // Over the map rather than an inset, so the map's own bottom edge, and the Apple Maps
+            // logo MapKit pins to it, stay down by the tab bar instead of floating above these.
+            .overlay(alignment: .bottom) {
                 VStack(alignment: .trailing, spacing: 10) {
                     // Centered over the tab bar's Map button: that button is about 61 points across
                     // with 22 points to the screen's edge, so its center is 52 points in. A 52-point
