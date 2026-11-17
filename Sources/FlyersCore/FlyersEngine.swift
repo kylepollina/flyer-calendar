@@ -723,6 +723,15 @@ public final class FlyersEngine: ObservableObject {
             .sorted { ($0.deletedAt ?? now) > ($1.deletedAt ?? now) }
     }
 
+    /// Restores one event from a swipe. Waits for the swipe to finish closing before the event
+    /// moves out of Recently Deleted, so the two animations don't fight and swap rows around.
+    public func restoreAfterSwipe(_ id: UUID) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            restore([id])
+        }
+    }
+
     /// Brings hidden events back. One deleted here goes back where it was. One that left Calendar
     /// stays off it, since it may still be there under a new ID; Add to Calendar puts it back.
     public func restore(_ ids: [UUID]) {

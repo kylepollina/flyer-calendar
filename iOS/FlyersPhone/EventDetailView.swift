@@ -225,9 +225,7 @@ struct EventDetailView: View {
 
     /// The other events read from this photo, on a page of their own where you can manage them.
     private func samePhoto(_ events: [FlyerEvent], current: FlyerEvent) -> some View {
-        NavigationLink {
-            PhotoEventsView(model: model, engine: engine, flyerID: current.flyerID, currentID: current.id)
-        } label: {
+        NavigationLink(value: PhoneRoute.photoEvents(flyerID: current.flyerID, from: current.id)) {
             GlassCard {
                 HStack(spacing: 12) {
                     Image(systemName: "photo.stack").foregroundStyle(.secondary).frame(width: 22)
@@ -537,7 +535,7 @@ struct PhotoEventsView: View {
             }
             Section {
                 ForEach(events) { event in
-                    NavigationLink(value: event.id) {
+                    NavigationLink(value: PhoneRoute.event(event.id)) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(event.name).fontWeight(event.id == currentID ? .semibold : .regular)
                             Text(event.recurrence.map(EventFormat.repeats) ?? EventFormat.summary(event, day: nil))

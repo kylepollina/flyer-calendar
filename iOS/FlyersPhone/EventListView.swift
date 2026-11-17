@@ -2,6 +2,29 @@ import FlyersCore
 import SwiftUI
 import UIKit
 
+/// Every page a navigation stack can push. All of them go through the stack's path, so stepping
+/// from one to another always lands where you tapped. Mixing pushed views with path values made
+/// an event opened from "From This Photo" fall back to that page.
+enum PhoneRoute: Hashable {
+    case event(UUID)
+    /// Every event from one photo, opened from one of them.
+    case photoEvents(flyerID: UUID, from: UUID)
+}
+
+extension View {
+    /// The pages for `PhoneRoute`, for each navigation stack.
+    func phoneRoutes(model: PhoneModel, engine: FlyersEngine) -> some View {
+        navigationDestination(for: PhoneRoute.self) { route in
+            switch route {
+            case .event(let id):
+                EventDetailView(model: model, engine: engine, eventID: id)
+            case .photoEvents(let flyerID, let from):
+                PhotoEventsView(model: model, engine: engine, flyerID: flyerID, currentID: from)
+            }
+        }
+    }
+}
+
 enum PhoneTab: String, Hashable {
     case upcoming = "Upcoming"
     case past = "Past"
@@ -13,7 +36,7 @@ struct EventListView: View {
     @ObservedObject var engine: FlyersEngine
     @State private var tab = PhoneTab.upcoming
     /// Each tab keeps its own place, as tab bars do.
-    @State private var paths: [PhoneTab: [UUID]] = [:]
+    @State private var paths: [PhoneTab: [PhoneRoute]] = [:]
     @State private var isShowingSettings = false
 
     private var today: Day { .today }
@@ -42,9 +65,7 @@ struct EventListView: View {
         NavigationStack(path: Binding(get: { paths[tab] ?? [] }, set: { paths[tab] = $0 })) {
             list(tab)
                 .navigationTitle(tab.rawValue)
-                .navigationDestination(for: UUID.self) { id in
-                    EventDetailView(model: model, engine: engine, eventID: id)
-                }
+                .phoneRoutes(model: model, engine: engine)
                 .overlay(alignment: .bottom) { notices }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -89,21 +110,22 @@ struct EventListView: View {
                     "No past events", systemImage: "clock", description: Text("Events move here once they've finished.")
                 )
             } else {
+                // Both sections stay in place, even when empty, so a restored event slides from
+                // one to the other instead of a whole section popping in or out under your finger.
                 List {
-                    if !events.isEmpty {
-                        Section { ForEach(events) { row(for: $0, day: $0.startDay) } }
-                    }
-                    if !hidden.isEmpty {
-                        Section {
-                            ForEach(hidden) { hiddenRow($0) }
-                        } header: {
-                            Text("Recently Deleted")
-                        } footer: {
+                    Section { ForEach(events) { row(for: $0, day: $0.startDay) } }
+                    Section {
+                        ForEach(hidden) { hiddenRow($0) }
+                    } header: {
+                        if !hidden.isEmpty { Text("Recently Deleted") }
+                    } footer: {
+                        if !hidden.isEmpty {
                             Text("Swipe one to restore it, or open it. Deleted events leave this list after 30 days.")
                         }
                     }
                     bottomSpace
                 }
+                .animation(.snappy, value: hidden.map(\.id))
             }
         case .map:
             EmptyView()
@@ -124,7 +146,7 @@ struct EventListView: View {
     }
 
     private func row(for event: FlyerEvent, day: Day?) -> some View {
-        NavigationLink(value: event.id) {
+        NavigationLink(value: PhoneRoute.event(event.id)) {
             EventRow(event: event, day: day, thumbnail: model.thumbnail(engine.flyer(id: event.flyerID)))
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -146,7 +168,7 @@ struct EventListView: View {
 
     /// Tap to open its page, which has Restore, or swipe left to restore it here.
     private func hiddenRow(_ event: FlyerEvent) -> some View {
-        NavigationLink(value: event.id) {
+        NavigationLink(value: PhoneRoute.event(event.id)) {
             EventRow(
                 event: event, day: event.startDay, thumbnail: model.thumbnail(engine.flyer(id: event.flyerID)),
                 note: event.state == .removedInCalendar ? "Removed in Calendar" : "Deleted in Flyers"
@@ -155,7 +177,7 @@ struct EventListView: View {
         }
         // Swiping left shows Restore on the right, where Delete sits on other rows.
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button { engine.restore([event.id]) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
+            Button { engine.restoreAfterSwipe(event.id) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
                 .tint(.blue)
         }
         .contextMenu {

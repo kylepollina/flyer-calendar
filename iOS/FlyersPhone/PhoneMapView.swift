@@ -10,7 +10,7 @@ struct PhoneMapView: View {
     @ObservedObject var model: PhoneModel
     @ObservedObject var engine: FlyersEngine
     /// Events opened from the map, which open within the map's tab.
-    @State private var path: [UUID] = []
+    @State private var path: [PhoneRoute] = []
 
     /// One place, with every event there.
     struct Place: Identifiable {
@@ -178,9 +178,7 @@ struct PhoneMapView: View {
             }
             .navigationTitle("Map")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: UUID.self) { id in
-                EventDetailView(model: model, engine: engine, eventID: id)
-            }
+            .phoneRoutes(model: model, engine: engine)
             // Fits every pin the first time, before you've looked anywhere yourself.
             .onChange(of: placesWithEvents.map(\.id), initial: true) {
                 guard savedRegion.isEmpty,
@@ -223,7 +221,7 @@ struct PhoneMapView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(pin.events) { event in
-                        Button { path.append(event.id) } label: {
+                        Button { path.append(.event(event.id)) } label: {
                             EventRow(
                                 event: event, day: event.nextDay(onOrAfter: today),
                                 thumbnail: model.thumbnail(engine.flyer(id: event.flyerID))

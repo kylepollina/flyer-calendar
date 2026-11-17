@@ -384,14 +384,16 @@ struct MainView: View {
             } else {
                 List(selection: $selection) {
                     ForEach(events) { eventRow($0, day: $0.startDay) }
-                    if !hidden.isEmpty {
-                        // Deleted events stay in the library, so a rescan can't bring them back.
-                        // Here you can bring them back yourself.
-                        Section("Recently Deleted") {
-                            ForEach(hidden) { hiddenRow($0) }
-                        }
+                    // Deleted events stay in the library, so a rescan can't bring them back. Here
+                    // you can bring them back yourself. The section stays in place even when empty,
+                    // so a restored event slides out of it instead of the list jumping.
+                    Section {
+                        ForEach(hidden) { hiddenRow($0) }
+                    } header: {
+                        if !hidden.isEmpty { Text("Recently Deleted") }
                     }
                 }
+                .animation(.snappy, value: hidden.map(\.id))
                 .listStyle(.sidebar)
                 .onDeleteCommand(perform: deleteSelection)
             }
@@ -421,7 +423,7 @@ struct MainView: View {
         }
         // Click to open its page, which has Restore. Or swipe left, or Control-click.
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button { engine.restore([event.id]) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
+            Button { engine.restoreAfterSwipe(event.id) } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
                 .tint(.blue)
         }
         .contextMenu {
