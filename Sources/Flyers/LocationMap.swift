@@ -259,3 +259,29 @@ struct MapsAppPicker: View {
         }
     }
 }
+
+/// You on the map: a blue dot with a white ring and a soft glow, like Maps and Find My. Shared by
+/// the Mac and iPhone maps, which draw it over the map so it's never under a pin.
+struct YouAreHere: View {
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.blue.opacity(0.25))
+                .frame(width: 44, height: 44)
+                .scaleEffect(isPulsing ? 1 : 0.5)
+                .opacity(isPulsing ? 0 : 1)
+            Circle()
+                .fill(.blue)
+                .frame(width: 18, height: 18)
+                .overlay { Circle().strokeBorder(.white, lineWidth: 3) }
+                .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 2).repeatForever(autoreverses: false)) { isPulsing = true }
+        }
+        .allowsHitTesting(false)
+        .accessibilityLabel("My location")
+    }
+}

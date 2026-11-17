@@ -1,19 +1,15 @@
 import AppKit
+import CoreLocation
 import FlyersCore
 import MapKit
 import SwiftUI
 
-/// Every event that has a findable place, past and upcoming, on one map.
+/// Every upcoming event that has a findable place, on one map, as on the iPhone.
 /// Events at the same place share a pin, and selecting it lists them.
 struct EventsMap: View {
     @ObservedObject var engine: FlyersEngine
     let thumbnail: (FlyerEvent) -> NSImage?
     let onOpen: (UUID) -> Void
-
-    enum Show: String, CaseIterable, Identifiable {
-        case all = "All", upcoming = "Upcoming", past = "Past"
-        var id: String { rawValue }
-    }
 
     struct Pin: Identifiable, Hashable {
         var place: FoundPlace
@@ -26,25 +22,27 @@ struct EventsMap: View {
     }
 
     @State private var places: [UUID: FoundPlace] = [:]
-    @State private var show = Show.all
     @State private var selectedPin: String?
     @State private var isSearching = false
     @State private var position = MapCameraPosition.automatic
+    /// Asks once to show where you are. Kept here so the request isn't dropped.
+    @State private var locationManager = CLLocationManager()
+    @State private var userLocation: CLLocation?
+    /// Counts camera moves, so the dot drawn over the map redraws as it pans.
+    @State private var cameraMoves = 0
     private let today = Day.today
 
     private var located: [FlyerEvent] {
-        engine.visibleEvents.filter { $0.location != nil && $0.state != .needsReview }
+        engine.visibleEvents.filter { $0.location != nil && !$0.isOver(today: today) }
     }
 
     private var pins: [Pin] {
         var byPlace: [String: Pin] = [:]
         for event in located {
-            let isOver = event.isOver(today: today)
-            if show == .upcoming && isOver || show == .past && !isOver { continue }
             guard let place = places[event.id] else { continue }
             var pin = byPlace[Pin(place: place, events: [], hasUpcoming: false).id] ?? Pin(place: place, events: [], hasUpcoming: false)
             pin.events.append(event)
-            pin.hasUpcoming = pin.hasUpcoming || !isOver
+            pin.hasUpcoming = true
             byPlace[pin.id] = pin
         }
         return byPlace.values.sorted { $0.id < $1.id }
@@ -52,7 +50,14 @@ struct EventsMap: View {
 
     var body: some View {
         let pins = pins
+        MapReader { proxy in
         Map(position: $position) {
+            // How sure the Mac is of where you are, as a soft blue circle under everything.
+            if let userLocation, userLocation.horizontalAccuracy > 0 {
+                MapCircle(center: userLocation.coordinate, radius: userLocation.horizontalAccuracy)
+                    .foregroundStyle(.blue.opacity(0.12))
+                    .stroke(.blue.opacity(0.3), lineWidth: 1)
+            }
             ForEach(pins) { pin in
                 Annotation(
                     pin.events.count == 1 ? pin.events[0].name : (pin.place.name ?? "\(pin.events.count) events"),
@@ -64,25 +69,36 @@ struct EventsMap: View {
                 }
             }
         }
-        .overlay(alignment: .top) {
-            HStack(spacing: 12) {
-                Picker("Show", selection: $show) {
-                    ForEach(Show.allCases) { Text($0.rawValue).tag($0) }
+        .onMapCameraChange(frequency: .continuous) { cameraMoves += 1 }
+        // You, drawn over the map rather than in it, so you're never under a pin.
+        .overlay {
+            if let userLocation, let spot = proxy.convert(userLocation.coordinate, to: .local) {
+                let _ = cameraMoves
+                YouAreHere().position(spot)
+            }
+        }
+        }
+        .onAppear {
+            if locationManager.authorizationStatus == .notDetermined { locationManager.requestWhenInUseAuthorization() }
+        }
+        .task {
+            do {
+                for try await update in CLLocationUpdate.liveUpdates() {
+                    if let location = update.location { userLocation = location }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                if isSearching {
+            } catch {}
+        }
+        .overlay(alignment: .top) {
+            if isSearching {
+                HStack(spacing: 12) {
                     ProgressView().controlSize(.small)
                     Text("Finding places").font(.callout).foregroundStyle(.secondary)
-                } else {
-                    Text(summary(pins)).font(.callout).foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .glassSurface(in: Capsule())
+                .padding(12)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .glassSurface(in: Capsule())
-            .padding(12)
         }
         .overlay(alignment: .bottom) {
             if let pin = pins.first(where: { $0.id == selectedPin }) {
@@ -90,20 +106,11 @@ struct EventsMap: View {
             }
         }
         .animation(.snappy, value: selectedPin)
-        .onChange(of: show) { selectedPin = nil }
         // Reframes when the set of places changes, not on every redraw, so it never fights your panning.
         .onChange(of: pins.map(\.id), initial: true) {
             if let region = MKCoordinateRegion.fitting(pins.map(\.place.coordinate)) { position = .region(region) }
         }
         .task(id: located.map(\.id)) { await findPlaces() }
-    }
-
-    private func summary(_ pins: [Pin]) -> String {
-        let shown = pins.reduce(0) { $0 + $1.events.count }
-        let missing = located.count - places.count
-        var text = shown == 1 ? "1 event" : "\(shown) events"
-        if missing > 0 { text += " · \(missing) without a findable place" }
-        return text
     }
 
     private func pinCard(_ pin: Pin) -> some View {

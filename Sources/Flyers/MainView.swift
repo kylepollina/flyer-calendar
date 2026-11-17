@@ -76,9 +76,10 @@ struct MainView: View {
                 NavigationSplitView {
                     sidebar
                         .navigationSplitViewColumnWidth(min: 300, ideal: 350, max: 460)
-                        // In the window's toolbar over the sidebar, in the same glass as Map and Scan now.
+                        // In the window's toolbar over the sidebar, Settings and Scan now share one
+                        // piece of glass.
                         .toolbar {
-                            ToolbarItem(placement: .automatic) {
+                            ToolbarItemGroup(placement: .automatic) {
                                 Toggle(isOn: Binding(
                                     get: { model.isShowingSettings },
                                     set: { showing in
@@ -91,14 +92,6 @@ struct MainView: View {
                                         .padding(.horizontal, 6)
                                 }
                                 .help("Settings (⌘,)")
-                            }
-                        }
-                } detail: {
-                    detail
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .overlay(alignment: .bottom) { notices }
-                        .toolbar {
-                            ToolbarItem(placement: .primaryAction) {
                                 Button {
                                     Task { await engine.scan() }
                                 } label: {
@@ -109,6 +102,10 @@ struct MainView: View {
                                 .help("Check your library for new flyers (⌘R)")
                             }
                         }
+                } detail: {
+                    detail
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .overlay(alignment: .bottom) { notices }
                 }
                 .background { tabShortcuts }
                 .onDrop(of: DropLoader.types, isTargeted: $isDropTargeted, perform: scanDrop)
