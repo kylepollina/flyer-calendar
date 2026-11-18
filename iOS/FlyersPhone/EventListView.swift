@@ -46,8 +46,8 @@ struct EventListView: View {
 
     private var today: Day { .today }
 
-    /// Tabs along the bottom, where your thumb is. The map sits apart at the bottom right, the
-    /// place iOS gives a tab that isn't one of the lists.
+    /// Tabs along the bottom, where your thumb is: the two lists and the map, with the camera set
+    /// apart at the bottom right.
     var body: some View {
         // Tapping Map while on the map goes back to Upcoming, so the map button works as a toggle.
         // Camera never becomes the page: it opens the camera over whatever you're looking at.
@@ -60,11 +60,11 @@ struct EventListView: View {
         })) {
             Tab(PhoneTab.upcoming.rawValue, systemImage: "calendar", value: PhoneTab.upcoming) { stack(.upcoming) }
             Tab(PhoneTab.past.rawValue, systemImage: "clock", value: PhoneTab.past) { stack(.past) }
-            // Last of the tabs, so it sits right beside Map.
-            Tab(PhoneTab.camera.rawValue, systemImage: "camera", value: PhoneTab.camera) { Color.clear }
-            Tab(PhoneTab.map.rawValue, systemImage: "map", value: PhoneTab.map, role: .search) {
+            Tab(PhoneTab.map.rawValue, systemImage: "map", value: PhoneTab.map) {
                 PhoneMapView(model: model, engine: engine)
             }
+            // Set apart at the bottom right, the place iOS gives a button that isn't one of the pages.
+            Tab(PhoneTab.camera.rawValue, systemImage: "camera", value: PhoneTab.camera, role: .search) { Color.clear }
         }
         .sheet(isPresented: $isShowingSettings) { PhoneSettingsView(model: model, engine: engine) }
         .fullScreenCover(isPresented: $isShowingCamera) {

@@ -158,7 +158,7 @@ struct PhoneMapView: View {
             // logo MapKit pins to it, stay down by the tab bar instead of floating above these.
             .overlay(alignment: .bottom) {
                 VStack(alignment: .trailing, spacing: 10) {
-                    // Centered over the tab bar's Map button: that button is about 61 points across
+                    // Centered over the tab bar's round Camera button: it's about 61 points across
                     // with 22 points to the screen's edge, so its center is 52 points in. A 52-point
                     // button 26 points in shares that center line.
                     Button(action: centerOnYou) {
