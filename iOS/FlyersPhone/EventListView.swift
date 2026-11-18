@@ -41,6 +41,8 @@ struct EventListView: View {
     @State private var paths: [PhoneTab: [PhoneRoute]] = [:]
     @State private var isShowingSettings = false
     @State private var isShowingCamera = false
+    /// Shared by Upcoming and Past, so a search carries over when you switch.
+    @State private var searchText = ""
 
     private var today: Day { .today }
 
@@ -90,6 +92,7 @@ struct EventListView: View {
         NavigationStack(path: Binding(get: { paths[tab] ?? [] }, set: { paths[tab] = $0 })) {
             list(tab)
                 .navigationTitle(tab.rawValue)
+                .searchable(text: $searchText, prompt: "Search events")
                 .phoneRoutes(model: model, engine: engine)
                 .overlay(alignment: .bottom) { notices }
                 .toolbar {
@@ -111,6 +114,32 @@ struct EventListView: View {
     }
 
     @ViewBuilder private func list(_ tab: PhoneTab) -> some View {
+        if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            searchResults
+        } else {
+            lists(tab)
+        }
+    }
+
+    /// Matching events from both lists, upcoming first.
+    @ViewBuilder private var searchResults: some View {
+        let results = EventList.search(searchText, in: engine.document.events, today: today)
+        if results.isEmpty {
+            ContentUnavailableView.search(text: searchText)
+        } else {
+            List {
+                if !results.upcoming.isEmpty {
+                    Section("Upcoming") { ForEach(results.upcoming) { row(for: $0.event, day: $0.next) } }
+                }
+                if !results.past.isEmpty {
+                    Section("Past") { ForEach(results.past) { row(for: $0, day: $0.startDay) } }
+                }
+                bottomSpace
+            }
+        }
+    }
+
+    @ViewBuilder private func lists(_ tab: PhoneTab) -> some View {
         switch tab {
         case .upcoming:
             let sections = EventList.upcoming(engine.document.events, today: today)

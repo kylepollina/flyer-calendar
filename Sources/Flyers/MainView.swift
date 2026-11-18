@@ -67,6 +67,9 @@ struct MainView: View {
     @State private var pendingDelete: [UUID] = []
     /// Set once Settings has been opened, after which its page is kept rather than rebuilt.
     @State private var hasOpenedSettings = false
+    /// What you're searching for. While it isn't empty, the sidebar lists matches from both lists.
+    @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
 
     private var today: Day { .today }
 
@@ -201,12 +204,17 @@ struct MainView: View {
 
     /// ⌘1, ⌘2 and ⌘3 switch lists. A segmented picker can't hold shortcuts itself.
     private var tabShortcuts: some View {
-        ForEach(Array(ListTab.allCases.enumerated()), id: \.element) { index, item in
-            Button(item.rawValue) { showList(item) }
-                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
-                .opacity(0)
-                .accessibilityHidden(true)
+        Group {
+            ForEach(Array(ListTab.allCases.enumerated()), id: \.element) { index, item in
+                Button(item.rawValue) { showList(item) }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")))
+            }
+            // ⌘F goes to the search field, as in other Mac apps.
+            Button("Search") { isSearchFocused = true }
+                .keyboardShortcut("f")
         }
+        .opacity(0)
+        .accessibilityHidden(true)
     }
 
     /// Goes to a list, leaving the settings page even if that list is already the current one.
@@ -307,6 +315,8 @@ struct MainView: View {
     /// in the toolbar above, and the last scan sits at the top of the list.
     private var sidebar: some View {
         list
+            .searchable(text: $searchText, placement: .sidebar, prompt: "Search events")
+            .searchFocused($isSearchFocused)
             .safeAreaInset(edge: .top, spacing: 0) {
                 HStack(spacing: 10) {
                     if let scanStatus {
@@ -360,6 +370,33 @@ struct MainView: View {
     }
 
     @ViewBuilder private var list: some View {
+        if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            searchResults
+        } else {
+            lists
+        }
+    }
+
+    /// Matching events from both lists, upcoming first, as on the iPhone.
+    @ViewBuilder private var searchResults: some View {
+        let results = EventList.search(searchText, in: engine.document.events, today: today)
+        if results.isEmpty {
+            EmptyList(symbol: "magnifyingglass", title: "No results", message: "No events match “\(searchText)”.")
+        } else {
+            List(selection: $selection) {
+                if !results.upcoming.isEmpty {
+                    Section("Upcoming") { ForEach(results.upcoming) { eventRow($0.event, day: $0.next) } }
+                }
+                if !results.past.isEmpty {
+                    Section("Past") { ForEach(results.past) { eventRow($0, day: $0.startDay) } }
+                }
+            }
+            .listStyle(.sidebar)
+            .onDeleteCommand(perform: deleteSelection)
+        }
+    }
+
+    @ViewBuilder private var lists: some View {
         switch tab {
         case .upcoming:
             let sections = EventList.upcoming(engine.document.events, today: today)

@@ -64,6 +64,33 @@ public enum EventList {
         }
     }
 
+    /// What a search found, upcoming events soonest first and past ones most recent first.
+    public struct SearchResults: Equatable {
+        public var upcoming: [Row]
+        public var past: [FlyerEvent]
+        public var isEmpty: Bool { upcoming.isEmpty && past.isEmpty }
+    }
+
+    /// Events whose name, place, description, sponsors or printed date contain every word you
+    /// typed, ignoring case and accents. Deleted events aren't searched.
+    public static func search(_ query: String, in events: [FlyerEvent], today: Day) -> SearchResults {
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return SearchResults(upcoming: [], past: []) }
+        let matches = events.filter { event in
+            guard !event.isHidden else { return false }
+            let text = ([event.name, event.location, event.details, event.datePrinted] + (event.sponsors ?? []))
+                .compactMap { $0 }
+                .joined(separator: " ")
+            return words.allSatisfy { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        }
+        let upcoming = matches.filter { !$0.isOver(today: today) }
+            .map { Row(event: $0, next: $0.nextDay(onOrAfter: today)) }
+            .sorted { ($0.next?.number ?? Int.max, $0.event.name) < ($1.next?.number ?? Int.max, $1.event.name) }
+        let past = matches.filter { $0.isOver(today: today) }
+            .sorted { ($0.startDay?.number ?? 0) > ($1.startDay?.number ?? 0) }
+        return SearchResults(upcoming: upcoming, past: past)
+    }
+
     private static let monthFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.setLocalizedDateFormatFromTemplate("MMMM yyyy")

@@ -14,6 +14,24 @@ private func makeEvent(
 }
 
 @Suite struct EventListTests {
+    @Test func searchFindsEventsByAnyOfTheirWordsSoonestFirst() {
+        var climbing = makeEvent("Bouldering Night", start: "2026-11-20")
+        climbing.location = "Movement Lincoln Park"
+        let chess = makeEvent("Chess Club", start: "2026-11-05")
+        var cafe = makeEvent("Open Mic", start: "2026-10-01")
+        cafe.details = "At the Understudy café"
+        let deleted = makeEvent("Chess Swap", start: "2026-11-06", state: .deleted)
+        let all = [climbing, chess, cafe, deleted]
+
+        #expect(EventList.search("lincoln park", in: all, today: today).upcoming.map(\.event.name) == ["Bouldering Night"])
+        // Accents and case don't matter, and past events come back too.
+        #expect(EventList.search("CAFE", in: all, today: today).past.map(\.name) == ["Open Mic"])
+        // Every word has to match, and deleted events aren't searched.
+        #expect(EventList.search("chess club", in: all, today: today).upcoming.map(\.event.name) == ["Chess Club"])
+        #expect(EventList.search("chess", in: all, today: today).upcoming.count == 1)
+        #expect(EventList.search("  ", in: all, today: today).isEmpty)
+    }
+
     private let today = Day(iso: "2026-11-03")!
 
     @Test func upcomingIsChronologicalWithBuckets() {
