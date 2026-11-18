@@ -91,6 +91,7 @@ struct EventsMap: View {
                         title: title(of: pin),
                         image: thumbnail(pin.events[0]),
                         count: pin.events.count,
+                        isOnePhoto: Set(pin.events.map(\.flyerID)).count == 1,
                         isSelected: isSelected(pin)
                     ) {
                         lastPinTap = Date()

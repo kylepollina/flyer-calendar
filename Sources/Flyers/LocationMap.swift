@@ -308,6 +308,8 @@ struct EventPin: View {
     let title: String
     let image: PlatformImage?
     let count: Int
+    /// Every event in the pin comes from the same photo, so the photo says more than a number.
+    var isOnePhoto = false
     let isSelected: Bool
     let action: () -> Void
 
@@ -316,8 +318,8 @@ struct EventPin: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 0) {
-                if count > 1 {
-                    // Several events: just how many, big. Zoom in and they split into photos.
+                if count > 1 && !isOnePhoto {
+                    // Events from different photos: just how many, big. Zoom in and they split into photos.
                     Text("\(count)")
                         .font(.system(size: 19, weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -330,6 +332,19 @@ struct EventPin: View {
                         .frame(width: size, height: size)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white, lineWidth: 3) }
+                        // Several events from this one photo: a small count in the corner.
+                        .overlay(alignment: .topTrailing) {
+                            if count > 1 {
+                                Text("\(count)")
+                                    .font(.caption2.weight(.bold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.white)
+                                    .frame(minWidth: 20, minHeight: 20)
+                                    .background(Color.accentColor, in: Circle())
+                                    .overlay { Circle().strokeBorder(.white, lineWidth: 2) }
+                                    .offset(x: 7, y: -7)
+                            }
+                        }
                 }
                 Image(systemName: "triangle.fill")
                     .font(.system(size: 12))
