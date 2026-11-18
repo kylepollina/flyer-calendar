@@ -28,6 +28,8 @@ extension View {
 enum PhoneTab: String, Hashable {
     case upcoming = "Upcoming"
     case past = "Past"
+    /// Not a page: tapping it opens the camera.
+    case camera = "Camera"
     case map = "Map"
 }
 
@@ -38,6 +40,7 @@ struct EventListView: View {
     /// Each tab keeps its own place, as tab bars do.
     @State private var paths: [PhoneTab: [PhoneRoute]] = [:]
     @State private var isShowingSettings = false
+    @State private var isShowingCamera = false
 
     private var today: Day { .today }
 
@@ -45,20 +48,42 @@ struct EventListView: View {
     /// place iOS gives a tab that isn't one of the lists.
     var body: some View {
         // Tapping Map while on the map goes back to Upcoming, so the map button works as a toggle.
+        // Camera never becomes the page: it opens the camera over whatever you're looking at.
         TabView(selection: Binding(get: { tab }, set: { new in
+            if new == .camera {
+                isShowingCamera = true
+                return
+            }
             tab = new == .map && tab == .map ? .upcoming : new
         })) {
             Tab(PhoneTab.upcoming.rawValue, systemImage: "calendar", value: PhoneTab.upcoming) { stack(.upcoming) }
             Tab(PhoneTab.past.rawValue, systemImage: "clock", value: PhoneTab.past) { stack(.past) }
+            // Last of the tabs, so it sits right beside Map.
+            Tab(PhoneTab.camera.rawValue, systemImage: "camera", value: PhoneTab.camera) { Color.clear }
             Tab(PhoneTab.map.rawValue, systemImage: "map", value: PhoneTab.map, role: .search) {
                 PhoneMapView(model: model, engine: engine)
             }
         }
         .sheet(isPresented: $isShowingSettings) { PhoneSettingsView(model: model, engine: engine) }
+        .fullScreenCover(isPresented: $isShowingCamera) {
+            CameraCapture { photo in
+                Task { await scanCameraPhoto(photo) }
+            }
+            .ignoresSafeArea()
+        }
         .fullScreenCover(isPresented: $model.isShowingSetup, onDismiss: model.setupClosed) { PhoneSetupView(model: model, engine: engine) }
         .confirmingDelete($model.pendingDelete, engine: engine, perform: model.delete)
         .photoDeletePrompt(model: model, engine: engine)
         .sensoryFeedback(.success, trigger: engine.lastDeletedIDs) { _, new in !new.isEmpty }
+    }
+
+    /// Reads a photo you just took, like a dropped photo on the Mac, then opens what it found.
+    private func scanCameraPhoto(_ photo: DroppedPhoto) async {
+        let found = await engine.scanDropped([photo])
+        guard let first = found.first, let event = engine.event(id: first) else { return }
+        let target: PhoneTab = event.isOver(today: today) ? .past : .upcoming
+        tab = target
+        paths[target] = [.event(first)]
     }
 
     private func stack(_ tab: PhoneTab) -> some View {
@@ -127,7 +152,7 @@ struct EventListView: View {
                 }
                 .animation(.snappy, value: hidden.map(\.id))
             }
-        case .map:
+        case .map, .camera:
             EmptyView()
         }
     }
