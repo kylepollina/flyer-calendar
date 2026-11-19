@@ -41,6 +41,8 @@ struct EventListView: View {
     @State private var paths: [PhoneTab: [PhoneRoute]] = [:]
     @State private var isShowingSettings = false
     @State private var isShowingCamera = false
+    /// The page you were on before the camera, to go back to when it closes.
+    @State private var tabBeforeCamera = PhoneTab.upcoming
     /// Shared by Upcoming and Past, so a search carries over when you switch.
     @State private var searchText = ""
 
@@ -50,9 +52,12 @@ struct EventListView: View {
     /// apart at the bottom right.
     var body: some View {
         // Tapping Map while on the map goes back to Upcoming, so the map button works as a toggle.
-        // Camera never becomes the page: it opens the camera over whatever you're looking at.
+        // Camera opens the camera over whatever you're looking at. The tab bar moves to its empty
+        // page anyway, so the page you came from comes back when the camera closes.
         TabView(selection: Binding(get: { tab }, set: { new in
             if new == .camera {
+                if tab != .camera { tabBeforeCamera = tab }
+                tab = .camera
                 isShowingCamera = true
                 return
             }
@@ -67,7 +72,9 @@ struct EventListView: View {
             Tab(PhoneTab.camera.rawValue, systemImage: "camera", value: PhoneTab.camera, role: .search) { Color.clear }
         }
         .sheet(isPresented: $isShowingSettings) { PhoneSettingsView(model: model, engine: engine) }
-        .fullScreenCover(isPresented: $isShowingCamera) {
+        .fullScreenCover(isPresented: $isShowingCamera, onDismiss: {
+            if tab == .camera { tab = tabBeforeCamera }
+        }) {
             CameraCapture { photo in
                 Task { await scanCameraPhoto(photo) }
             }
