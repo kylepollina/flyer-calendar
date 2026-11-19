@@ -172,9 +172,14 @@ struct PhoneMapView: View {
                     .accessibilityLabel("Show My Location")
                     .padding(.trailing, 26)
                     .padding(.bottom, 14)
-                    if let pin = pins.first(where: isSelected) { pinCard(pin) }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .sheet(isPresented: Binding(
+                get: { pins.contains(where: isSelected) },
+                set: { if !$0 { selectedEvents = [] } }
+            )) {
+                if let pin = pins.first(where: isSelected) { pinSheet(pin) }
             }
             .navigationTitle("Map")
             .navigationBarTitleDisplayMode(.inline)
@@ -214,33 +219,32 @@ struct PhoneMapView: View {
         return "\(pin.events.count) events"
     }
 
-    private func pinCard(_ pin: Pin) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(pin.places.count == 1 ? (pin.places[0].place.name ?? title(of: pin)) : "\(pin.events.count) events nearby")
-                .font(.headline)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(pin.events) { event in
-                        Button { path.append(.event(event.id)) } label: {
-                            EventRow(
-                                event: event, day: event.nextDay(onOrAfter: today),
-                                thumbnail: model.thumbnail(engine.flyer(id: event.flyerID))
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
+    /// A pin's events, in a sheet that opens low so the map stays in view, drags up to three
+    /// quarters of the screen, and drags down to close.
+    private func pinSheet(_ pin: Pin) -> some View {
+        NavigationStack {
+            List(pin.events) { event in
+                Button {
+                    // Closes the sheet, then opens the event in the map's own stack.
+                    selectedEvents = []
+                    path.append(.event(event.id))
+                } label: {
+                    EventRow(
+                        event: event, day: event.nextDay(onOrAfter: today),
+                        thumbnail: model.thumbnail(engine.flyer(id: event.flyerID))
+                    )
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .listRowBackground(event.isUnseen ? Color.green.opacity(0.14) : nil)
             }
-            .frame(maxHeight: 190)
-            .fixedSize(horizontal: false, vertical: true)
+            .navigationTitle(pin.places.count == 1 ? (pin.places[0].place.name ?? title(of: pin)) : "\(pin.events.count) events nearby")
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassSurface(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .padding(.horizontal)
-        .padding(.bottom, 8)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .presentationDetents([.fraction(0.32), .fraction(0.75)])
+        .presentationDragIndicator(.visible)
+        // The map stays usable behind the low sheet, so you can pan, or tap it to close the sheet.
+        .presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.32)))
     }
 
     /// Looks places up one at a time, which stays well inside MapKit's search limits.
