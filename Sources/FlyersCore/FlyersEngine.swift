@@ -723,6 +723,11 @@ public final class FlyersEngine: ObservableObject {
             .sorted { ($0.deletedAt ?? now) > ($1.deletedAt ?? now) }
     }
 
+    /// The event whose photo was taken first, which stands for a group of events on the map.
+    public func eventWithOldestPhoto(_ events: [FlyerEvent]) -> FlyerEvent? {
+        events.min { (flyer(id: $0.flyerID)?.takenAt ?? .distantFuture) < (flyer(id: $1.flyerID)?.takenAt ?? .distantFuture) }
+    }
+
     /// You opened the event, so it's no longer highlighted as new.
     public func markSeen(_ id: UUID) {
         guard event(id: id)?.isUnseen == true else { return }

@@ -91,9 +91,8 @@ struct PhoneMapView: View {
                     Annotation(title(of: pin), coordinate: pin.coordinate, anchor: .bottom) {
                         EventPin(
                             title: title(of: pin),
-                            image: model.thumbnail(engine.flyer(id: pin.events[0].flyerID)),
+                            image: model.thumbnail(engine.flyer(id: (engine.eventWithOldestPhoto(pin.events) ?? pin.events[0]).flyerID)),
                             count: pin.events.count,
-                            isOnePhoto: Set(pin.events.map(\.flyerID)).count == 1,
                             isSelected: isSelected(pin)
                         ) {
                             lastPinTap = Date()

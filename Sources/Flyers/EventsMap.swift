@@ -89,9 +89,8 @@ struct EventsMap: View {
                 Annotation(title(of: pin), coordinate: pin.coordinate, anchor: .bottom) {
                     EventPin(
                         title: title(of: pin),
-                        image: thumbnail(pin.events[0]),
+                        image: thumbnail(engine.eventWithOldestPhoto(pin.events) ?? pin.events[0]),
                         count: pin.events.count,
-                        isOnePhoto: Set(pin.events.map(\.flyerID)).count == 1,
                         isSelected: isSelected(pin)
                     ) {
                         lastPinTap = Date()

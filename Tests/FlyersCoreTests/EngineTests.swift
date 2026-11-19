@@ -601,6 +601,20 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(engine.document.events[0].calendarItemID == "renumbered")
     }
 
+    @Test func aMapGroupShowsItsOldestPhoto() async {
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
+        await engine.scan()
+        var older = engine.document.events[0]
+        older.id = UUID()
+        older.flyerID = UUID()
+        var flyer = engine.document.flyers[0]
+        flyer.id = older.flyerID
+        flyer.takenAt = flyer.takenAt.addingTimeInterval(-86_400)
+        engine.document.flyers.append(flyer)
+        engine.document.events.append(older)
+        #expect(engine.eventWithOldestPhoto([engine.document.events[0], older])?.id == older.id)
+    }
+
     @Test func newEventsStayHighlightedUntilOpened() async {
         let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
         await engine.scan()
