@@ -102,6 +102,23 @@ struct EventListView: View {
                 .searchable(text: $searchText, prompt: "Search events")
                 .phoneRoutes(model: model, engine: engine)
                 .overlay(alignment: .bottom) { notices }
+                // Swiping in from the left edge opens Settings, whose button is at the top left.
+                // Only on the list itself: inside an event, that swipe goes back.
+                .overlay(alignment: .leading) {
+                    if (paths[tab] ?? []).isEmpty {
+                        Color.clear
+                            .frame(width: 18)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 12)
+                                    .onEnded { value in
+                                        if value.translation.width > 60, abs(value.translation.height) < value.translation.width {
+                                            isShowingSettings = true
+                                        }
+                                    }
+                            )
+                    }
+                }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { isShowingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
