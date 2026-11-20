@@ -40,6 +40,9 @@ struct EventListView: View {
     /// Each tab keeps its own place, as tab bars do.
     @State private var paths: [PhoneTab: [PhoneRoute]] = [:]
     @State private var isShowingSettings = false
+    /// How far a swipe has moved Settings from where it rests, open or closed, while your finger is
+    /// down. Settings follows it, then settles open or closed when you let go.
+    @State private var settingsDrag: CGFloat = 0
     @State private var isShowingCamera = false
     /// The page you were on before the camera, to go back to when it closes.
     @State private var tabBeforeCamera = PhoneTab.upcoming
@@ -71,7 +74,7 @@ struct EventListView: View {
             // Set apart at the bottom right, the place iOS gives a button that isn't one of the pages.
             Tab(PhoneTab.camera.rawValue, systemImage: "camera", value: PhoneTab.camera, role: .search) { Color.clear }
         }
-        .sheet(isPresented: $isShowingSettings) { PhoneSettingsView(model: model, engine: engine) }
+        .overlay { settingsPage }
         .fullScreenCover(isPresented: $isShowingCamera, onDismiss: {
             if tab == .camera { tab = tabBeforeCamera }
         }) {
@@ -84,6 +87,45 @@ struct EventListView: View {
         .confirmingDelete($model.pendingDelete, engine: engine, perform: model.delete)
         .photoDeletePrompt(model: model, engine: engine)
         .sensoryFeedback(.success, trigger: engine.lastDeletedIDs) { _, new in !new.isEmpty }
+    }
+
+    /// Settings as a page that slides in from the left over everything, following your finger, with
+    /// the screen behind it dimmed. Swipe it back left, tap Done, or tap the dimmed edge to close it.
+    private var settingsPage: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let revealed = min(max((isShowingSettings ? width : 0) + settingsDrag, 0), width)
+            ZStack(alignment: .leading) {
+                if revealed > 0 {
+                    Color.black.opacity(0.35 * revealed / width)
+                        .ignoresSafeArea()
+                        .onTapGesture { settle(open: false) }
+                    PhoneSettingsView(model: model, engine: engine, onClose: { settle(open: false) })
+                        .frame(width: width)
+                        .background(Color.appBackground)
+                        .shadow(color: .black.opacity(0.25), radius: 16)
+                        .offset(x: revealed - width)
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 20, coordinateSpace: .global)
+                                .onChanged { value in
+                                    // Sideways only, so scrolling Settings up and down still works.
+                                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                                    settingsDrag = min(0, value.translation.width)
+                                }
+                                .onEnded { value in
+                                    settle(open: !(value.translation.width < -100 || value.predictedEndTranslation.width < -240))
+                                }
+                        )
+                }
+            }
+        }
+    }
+
+    private func settle(open: Bool) {
+        withAnimation(.snappy(duration: 0.3)) {
+            isShowingSettings = open
+            settingsDrag = 0
+        }
     }
 
     /// Reads a photo you just took, like a dropped photo on the Mac, then opens what it found.
@@ -110,18 +152,17 @@ struct EventListView: View {
                             .frame(width: 18)
                             .contentShape(Rectangle())
                             .gesture(
-                                DragGesture(minimumDistance: 12)
+                                DragGesture(minimumDistance: 6, coordinateSpace: .global)
+                                    .onChanged { value in settingsDrag = max(0, value.translation.width) }
                                     .onEnded { value in
-                                        if value.translation.width > 60, abs(value.translation.height) < value.translation.width {
-                                            isShowingSettings = true
-                                        }
+                                        settle(open: value.translation.width > 100 || value.predictedEndTranslation.width > 240)
                                     }
                             )
                     }
                 }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button { isShowingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                        Button { settle(open: true) } label: { Label("Settings", systemImage: "gearshape") }
                     }
                     if model.canScan {
                         ToolbarItem(placement: .topBarTrailing) {
