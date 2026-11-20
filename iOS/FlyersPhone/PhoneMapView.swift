@@ -93,6 +93,7 @@ struct PhoneMapView: View {
                             title: title(of: pin),
                             image: model.thumbnail(engine.flyer(id: (engine.eventWithOldestPhoto(pin.events) ?? pin.events[0]).flyerID)),
                             count: pin.events.count,
+                            isHearted: pin.events.contains(where: \.isHearted),
                             isSelected: isSelected(pin)
                         ) {
                             lastPinTap = Date()

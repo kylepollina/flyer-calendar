@@ -728,6 +728,13 @@ public final class FlyersEngine: ObservableObject {
         events.min { (flyer(id: $0.flyerID)?.takenAt ?? .distantFuture) < (flyer(id: $1.flyerID)?.takenAt ?? .distantFuture) }
     }
 
+    /// Hearts the event, or takes the heart away.
+    public func toggleHeart(_ id: UUID) {
+        guard let event = event(id: id) else { return }
+        change(id) { $0.isFavorite = event.isHearted ? nil : true }
+        persist()
+    }
+
     /// You opened the event, so it's no longer highlighted as new.
     public func markSeen(_ id: UUID) {
         guard event(id: id)?.isUnseen == true else { return }

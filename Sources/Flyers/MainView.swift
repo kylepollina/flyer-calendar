@@ -476,7 +476,8 @@ struct MainView: View {
             thumbnail: thumbnail(engine.flyer(id: event.flyerID)),
             repeats: event.rrule != nil,
             status: RowStatus(event.state),
-            showsThumbnail: showsThumbnail
+            showsThumbnail: showsThumbnail,
+            isHearted: event.isHearted
         )
         .tag(event.id)
         // A soft green wash on events you haven't opened yet, like unread messages.
@@ -488,7 +489,15 @@ struct MainView: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) { delete([event.id]) } label: { Label("Delete", systemImage: "trash") }
         }
+        // Swipe right to heart it, as on the iPhone.
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button { engine.toggleHeart(event.id) } label: {
+                Label(event.isHearted ? "Unheart" : "Heart", systemImage: event.isHearted ? "heart.slash" : "heart.fill")
+            }
+            .tint(.pink)
+        }
         .contextMenu {
+            Button(event.isHearted ? "Unheart" : "Heart") { engine.toggleHeart(event.id) }
             if event.state == .available || event.state == .needsReview {
                 Button("Add to Calendar") { engine.addToCalendar(event.id) }
             }
@@ -635,6 +644,7 @@ struct RowLabel: View {
     let repeats: Bool
     let status: RowStatus?
     var showsThumbnail = true
+    var isHearted = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -667,6 +677,9 @@ struct RowLabel: View {
                 }
             }
             Spacer(minLength: 0)
+            if isHearted {
+                Image(systemName: "heart.fill").foregroundStyle(.pink).accessibilityLabel("Hearted")
+            }
             switch status {
             case .review:
                 Image(systemName: "exclamationmark.circle.fill")
@@ -906,6 +919,15 @@ struct EventDetail: View {
                     }
                     .glassButton()
                 }
+                Button { engine.toggleHeart(event.id) } label: {
+                    Label(event.isHearted ? "Unheart" : "Heart", systemImage: event.isHearted ? "heart.fill" : "heart")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.pink)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .glassButton()
+                .keyboardShortcut("l")
+                .help(event.isHearted ? "Unheart (⌘L)" : "Heart, to mark it as one you're interested in (⌘L)")
                 Button { isEditing = true } label: {
                     Label("Edit", systemImage: "pencil").labelStyle(.iconOnly)
                 }

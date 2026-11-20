@@ -105,6 +105,7 @@ struct TourView: View {
             FeatureRow(symbol: "list.bullet", title: "Upcoming and Past", keys: ["⌘1", "⌘2"])
             FeatureRow(symbol: "magnifyingglass", title: "Search events", keys: ["⌘F"])
             FeatureRow(symbol: "pencil", title: "Edit an event", keys: ["⌘E"])
+            FeatureRow(symbol: "heart", title: "Heart an event you're interested in", keys: ["⌘L"])
             FeatureRow(symbol: "trash", title: "Delete an event, with Undo", keys: ["⌫"])
             FeatureRow(symbol: "menubar.rectangle", title: "Next events, from the menu bar")
             FeatureRow(symbol: "gearshape", title: "Settings, and this tour", keys: ["⌘,"])

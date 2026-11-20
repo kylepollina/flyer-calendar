@@ -174,6 +174,11 @@ public struct FlyerEvent: Codable, Identifiable, Equatable, Sendable {
     public var isNew: Bool?
 
     public var isUnseen: Bool { isNew == true }
+
+    /// You hearted it, to mark it as one you're interested in. Syncs between your devices.
+    public var isFavorite: Bool?
+
+    public var isHearted: Bool { isFavorite == true }
     public var calendarItemID: String?
     /// Calendar's cross-device ID, used to find the event again if `calendarItemID` changes.
     public var calendarExternalID: String?

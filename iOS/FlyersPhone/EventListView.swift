@@ -215,13 +215,21 @@ struct EventListView: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) { model.requestDelete([event.id]) } label: { Label("Delete", systemImage: "trash") }
         }
-        .swipeActions(edge: .leading) {
+        // Swipe right to heart it. A full swipe hearts it in one go.
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button { engine.toggleHeart(event.id) } label: {
+                Label(event.isHearted ? "Unheart" : "Heart", systemImage: event.isHearted ? "heart.slash" : "heart.fill")
+            }
+            .tint(.pink)
             if event.state == .needsReview || event.state == .available {
                 Button { engine.addToCalendar(event.id) } label: { Label("Add", systemImage: "calendar.badge.plus") }
                     .tint(.green)
             }
         }
         .contextMenu {
+            Button(event.isHearted ? "Unheart" : "Heart", systemImage: event.isHearted ? "heart.slash" : "heart") {
+                engine.toggleHeart(event.id)
+            }
             if event.state == .needsReview || event.state == .available {
                 Button("Add to Calendar", systemImage: "calendar.badge.plus") { engine.addToCalendar(event.id) }
             }
@@ -335,6 +343,9 @@ struct EventRow: View {
                 }
             }
             Spacer(minLength: 0)
+            if event.isHearted {
+                Image(systemName: "heart.fill").foregroundStyle(.pink).accessibilityLabel("Hearted")
+            }
             if event.state == .needsReview {
                 Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange).accessibilityLabel("Needs review")
             } else if event.state == .queued {

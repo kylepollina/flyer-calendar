@@ -309,6 +309,8 @@ struct EventPin: View {
     let title: String
     let image: PlatformImage?
     let count: Int
+    /// One of its events is hearted, shown by a heart in the top left corner.
+    var isHearted = false
     let isSelected: Bool
     let action: () -> Void
 
@@ -321,6 +323,18 @@ struct EventPin: View {
                     .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white, lineWidth: 3) }
+                    .overlay(alignment: .topLeading) {
+                        if isHearted {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 20, height: 20)
+                                .background(Color.pink, in: Circle())
+                                .overlay { Circle().strokeBorder(.white, lineWidth: 2) }
+                                .offset(x: -7, y: -7)
+                                .accessibilityLabel("Hearted")
+                        }
+                    }
                     // A group: how many events, in the corner. Zoom in and they split apart.
                     .overlay(alignment: .topTrailing) {
                         if count > 1 {

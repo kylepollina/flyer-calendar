@@ -615,6 +615,17 @@ private func flyer(_ name: String = "Chess") -> ExtractionResult {
         #expect(engine.eventWithOldestPhoto([engine.document.events[0], older])?.id == older.id)
     }
 
+    @Test func heartingAnEventTurnsOnAndOff() async {
+        let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
+        await engine.scan()
+        let id = engine.document.events[0].id
+        #expect(engine.event(id: id)?.isHearted == false)
+        engine.toggleHeart(id)
+        #expect(engine.event(id: id)?.isHearted == true)
+        engine.toggleHeart(id)
+        #expect(engine.event(id: id)?.isHearted == false)
+    }
+
     @Test func newEventsStayHighlightedUntilOpened() async {
         let (engine, _) = makeEngine(extractor: FakeExtractor { flyer() })
         await engine.scan()

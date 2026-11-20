@@ -146,6 +146,14 @@ struct EventDetailView: View {
                     Spacer()
                 }
                 if !event.isHidden {
+                    Button { engine.toggleHeart(event.id) } label: {
+                        Label(event.isHearted ? "Unheart" : "Heart", systemImage: event.isHearted ? "heart.fill" : "heart")
+                            .labelStyle(.iconOnly)
+                            .foregroundStyle(.pink)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .glassButton()
+                    .sensoryFeedback(.selection, trigger: event.isHearted)
                     Button { isEditing = true } label: {
                         Text("Edit")
                     }

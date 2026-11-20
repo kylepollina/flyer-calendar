@@ -91,6 +91,7 @@ struct EventsMap: View {
                         title: title(of: pin),
                         image: thumbnail(engine.eventWithOldestPhoto(pin.events) ?? pin.events[0]),
                         count: pin.events.count,
+                        isHearted: pin.events.contains(where: \.isHearted),
                         isSelected: isSelected(pin)
                     ) {
                         lastPinTap = Date()
@@ -219,7 +220,8 @@ struct EventsMap: View {
                                     detail: nil,
                                     thumbnail: thumbnail(event),
                                     repeats: event.rrule != nil,
-                                    status: nil
+                                    status: nil,
+                                    isHearted: event.isHearted
                                 )
                                 .contentShape(Rectangle())
                             }
