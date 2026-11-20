@@ -4,8 +4,7 @@ import SwiftUI
 struct PhoneSettingsView: View {
     @ObservedObject var model: PhoneModel
     @ObservedObject var engine: FlyersEngine
-    /// Slides the page back out. Settings is a page that slides in from the left, not a sheet.
-    var onClose: () -> Void = {}
+    @Environment(\.dismiss) private var dismiss
     @State private var isMovingPhotos = false
     @State private var isConfirmingClear = false
 
@@ -21,7 +20,7 @@ struct PhoneSettingsView: View {
                 if !model.isSetUp {
                     Section {
                         Button {
-                            onClose()
+                            dismiss()
                             model.isShowingSetup = true
                         } label: {
                             Label("Finish Setting Up", systemImage: "exclamationmark.circle.fill")
@@ -51,7 +50,7 @@ struct PhoneSettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { onClose() }.fontWeight(.semibold) }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) }
             }
         }
     }
