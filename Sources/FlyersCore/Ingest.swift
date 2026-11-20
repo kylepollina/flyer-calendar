@@ -59,6 +59,10 @@ public enum Ingest {
             // One with no date can't go on a calendar, so it waits for you to add a date.
             if event.isOver(today: today) || startDay == nil {
                 event.state = .available
+            } else if extracted.yearUncertain == true {
+                // A guessed year shouldn't land on your calendar. It waits, listed last, for a look.
+                event.state = .needsReview
+                event.problems.append("The flyer doesn't say which year. Check the date before adding it.")
             }
             output.append(event)
         }

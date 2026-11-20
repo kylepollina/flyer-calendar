@@ -14,6 +14,16 @@ private func makeEvent(
 }
 
 @Suite struct EventListTests {
+    @Test func eventsToCheckAreListedLast() {
+        let sections = EventList.upcoming([
+            makeEvent("Unsure", start: "2026-11-04", state: .needsReview),
+            makeEvent("Later", start: "2026-12-20"),
+        ], today: today)
+        #expect(sections.last?.title == EventList.toCheckTitle)
+        #expect(sections.last?.rows.map(\.event.name) == ["Unsure"])
+        #expect(sections.first?.rows.map(\.event.name) == ["Later"])
+    }
+
     @Test func searchFindsEventsByAnyOfTheirWordsSoonestFirst() {
         var climbing = makeEvent("Bouldering Night", start: "2026-11-20")
         climbing.location = "Movement Lincoln Park"

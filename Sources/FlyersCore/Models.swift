@@ -10,6 +10,9 @@ public struct ExtractedEvent: Codable, Equatable, Sendable {
     public var endDate: String?
     public var endTime: String?
     public var yearInferred: Bool
+    /// The flyer gives no year and the model couldn't tell which it is. Such an event waits for
+    /// you to check it. Optional so answers from before it existed still read.
+    public var yearUncertain: Bool?
     public var rrule: String?
     public var startUncertain: Bool
     public var location: String?
@@ -25,8 +28,10 @@ public struct ExtractedEvent: Codable, Equatable, Sendable {
         name: String, dateAsPrinted: String? = nil, startDate: String? = nil, startTime: String? = nil,
         endDate: String? = nil, endTime: String? = nil, yearInferred: Bool = false, rrule: String? = nil,
         startUncertain: Bool = false, location: String? = nil, locationInferred: Bool = false,
-        url: String? = nil, links: [EventLink]? = nil, sponsors: [String]? = nil, description: String? = nil
+        url: String? = nil, links: [EventLink]? = nil, sponsors: [String]? = nil, description: String? = nil,
+        yearUncertain: Bool? = nil
     ) {
+        self.yearUncertain = yearUncertain
         self.links = links
         self.sponsors = sponsors
         self.name = name

@@ -68,6 +68,14 @@ private func day(_ iso: String) -> Day { Day(iso: iso)! }
         )
     }
 
+    @Test func anUnsureYearWaitsToBeChecked() {
+        let event = run([ExtractedEvent(name: "Gala", startDate: "2026-09-12", yearInferred: true, yearUncertain: true)]).first
+        #expect(event?.state == .needsReview)
+        #expect(event?.problems.contains { $0.contains("which year") } == true)
+        // A year the model was sure of goes to the calendar as usual.
+        #expect(run([ExtractedEvent(name: "Gala", startDate: "2026-09-12", yearInferred: true, yearUncertain: false)]).first?.state == .queued)
+    }
+
     @Test func oneOffGoesToTheCalendar() {
         let events = run([ExtractedEvent(name: "Chess", dateAsPrinted: "Sun 4.26", startDate: "2026-04-26")])
         #expect(events.first?.state == .queued)

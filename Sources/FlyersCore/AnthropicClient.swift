@@ -229,8 +229,13 @@ public enum ExtractionPrompt {
 
     Dates:
     - Copy the date and time exactly as printed into date_as_printed.
-    - When the flyer gives no year, use the next matching date on or after the day the photo was taken, \
-    and set year_inferred to true. Use the weekday as a check when one is printed.
+    - When the flyer gives no year, set year_inferred to true and pick the year that puts the event \
+    nearest the day the photo was taken. Posters stay up while a show or exhibition is running, so a \
+    date up to about two months before the photo is this year: a run that's on now or just opened, such \
+    as "November 5–15" photographed on November 10. A date further back than that is next year. Use \
+    a printed weekday, or a season such as "2026/27", to check the year.
+    - Set year_uncertain to true when the flyer gives no year and you still can't tell which year it \
+    is, such as a date months away with no weekday or season to check against. Otherwise set it to false.
     - Use 24-hour HH:MM for times and YYYY-MM-DD for dates. Use null for anything the flyer doesn't \
     state, and don't invent an end time.
     - On a schedule or grid, match each row to its day label by position, including labels printed \
@@ -290,11 +295,12 @@ public enum ExtractionPrompt {
             "additionalProperties": false,
             "required": [
                 "name", "date_as_printed", "start_date", "start_time", "end_date", "end_time", "year_inferred",
-                "rrule", "start_uncertain", "location", "location_inferred", "links", "sponsors", "description",
+                "year_uncertain", "rrule", "start_uncertain", "location", "location_inferred", "links", "sponsors", "description",
             ],
             "properties": [
                 "name": string, "date_as_printed": nullable, "start_date": nullable, "start_time": nullable,
-                "end_date": nullable, "end_time": nullable, "year_inferred": boolean, "rrule": nullable,
+                "end_date": nullable, "end_time": nullable, "year_inferred": boolean, "year_uncertain": boolean,
+                "rrule": nullable,
                 "start_uncertain": boolean, "location": nullable, "location_inferred": boolean,
                 "links": ["type": "array", "items": link],
                 "sponsors": ["type": "array", "items": string],

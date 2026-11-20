@@ -15,12 +15,18 @@ public enum EventList {
         public var id: String { title }
     }
 
+    /// The last section of Upcoming, for events whose date needs a look before they're added.
+    public static let toCheckTitle = "Check the date"
+
     public static func upcoming(_ events: [FlyerEvent], today: Day) -> [Section] {
-        // Events held for review by older versions show here too, with Add to Calendar.
+        // Events waiting to be checked are listed too, with Add to Calendar.
         let live = events.filter { !$0.isHidden && !$0.isOver(today: today) }
         var rows = live.map { Row(event: $0, next: $0.nextDay(onOrAfter: today)) }
         rows.sort(by: { sortKey($0) < sortKey($1) })
 
+        // Events whose date needs checking go last, in a section of their own.
+        let toCheck = rows.filter { $0.event.state == .needsReview }
+        rows.removeAll { $0.event.state == .needsReview }
         var sections: [Section] = []
         for row in rows {
             let title = row.next.map { bucket($0, today: today) } ?? "No date"
@@ -30,6 +36,7 @@ public enum EventList {
                 sections.append(Section(title: title, rows: [row]))
             }
         }
+        if !toCheck.isEmpty { sections.append(Section(title: EventList.toCheckTitle, rows: toCheck)) }
         return sections
     }
 
