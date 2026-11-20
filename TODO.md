@@ -133,8 +133,8 @@ to bill against, so the options are Apple's models or a server of our own.
 - [x] Paid Applications Agreement: accepted, bank account and W-9 added (Nov 20). Waiting for Apple
       to make it Active. Needed for the sync purchase and the Small Business Program.
 - [ ] Developer account address: update requested (Nov 20), can take up to two weeks.
-- [ ] App Store Small Business Program: enroll (15% commission instead of 30%). Also required for
-      free Private Cloud Compute.
+- [x] App Store Small Business Program: applied (Nov 20), waiting for Apple. 15% commission instead
+      of 30%, and required for free Private Cloud Compute.
 - [ ] EU Digital Services Act trader status: App Store Connect → Business → Complete Compliance
       Requirements. Selling the sync purchase in the EU makes you a trader, and Apple then shows
       your contact details (address, phone, email) on the EU App Store listing. A business
