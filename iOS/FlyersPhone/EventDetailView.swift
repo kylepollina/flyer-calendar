@@ -350,27 +350,16 @@ private struct ZoomablePhoto: View {
     let onClose: () -> Void
     @State private var image: UIImage?
     @State private var failed = false
-    @State private var scale: CGFloat = 1
-    @State private var baseScale: CGFloat = 1
-    @State private var offset = CGSize.zero
-    @State private var baseOffset = CGSize.zero
+    @State private var isZoomed = false
 
     var body: some View {
         Group {
             if let shown = image ?? placeholder {
-                Image(uiImage: shown)
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(scale)
-                    .offset(offset)
+                ZoomingImage(image: shown, isZoomed: $isZoomed)
                     .offset(y: dismissDrag)
-                    .gesture(zoom)
-                    .simultaneousGesture(scale == 1 ? pullToClose : nil)
-                    .onTapGesture(count: 2) {
-                        withAnimation(.snappy) {
-                            if scale > 1 { reset() } else { scale = 3; baseScale = 3 }
-                        }
-                    }
+                    // Pulling down closes the viewer only when the photo isn't zoomed in; zoomed,
+                    // a drag pans the photo instead.
+                    .simultaneousGesture(isZoomed ? nil : pullToClose)
             } else if failed {
                 ContentUnavailableView(
                     "No photo", systemImage: "photo",
@@ -389,20 +378,6 @@ private struct ZoomablePhoto: View {
         }
     }
 
-    private var zoom: some Gesture {
-        MagnifyGesture()
-            .onChanged { scale = min(max(baseScale * $0.magnification, 1), 8) }
-            .onEnded { _ in
-                baseScale = scale
-                if scale == 1 { reset() }
-            }
-            .simultaneously(with: DragGesture(minimumDistance: scale > 1 ? 0 : 10_000)
-                .onChanged { value in
-                    offset = CGSize(width: baseOffset.width + value.translation.width, height: baseOffset.height + value.translation.height)
-                }
-                .onEnded { _ in baseOffset = offset })
-    }
-
     /// Pulling an unzoomed photo down closes the viewer, as in Photos. Sideways swipes still turn pages.
     private var pullToClose: some Gesture {
         DragGesture(minimumDistance: 20)
@@ -418,12 +393,97 @@ private struct ZoomablePhoto: View {
                 }
             }
     }
+}
 
-    private func reset() {
-        scale = 1
-        baseScale = 1
-        offset = .zero
-        baseOffset = .zero
+/// A photo in the system's zooming scroll view, the one Photos uses: pinch zooms around your
+/// fingers, a zoomed photo pans with momentum and bounces at its edges, and a double tap zooms into
+/// the spot you tapped, or back out.
+private struct ZoomingImage: UIViewRepresentable {
+    let image: UIImage
+    @Binding var isZoomed: Bool
+
+    func makeUIView(context: Context) -> ZoomingScrollView {
+        let view = ZoomingScrollView()
+        view.onZoomChange = { zoomed in
+            if zoomed != isZoomed { isZoomed = zoomed }
+        }
+        view.setImage(image)
+        return view
+    }
+
+    func updateUIView(_ view: ZoomingScrollView, context: Context) {
+        // The full photo replaces the small preview once it loads.
+        if view.imageView.image !== image { view.setImage(image) }
+    }
+}
+
+final class ZoomingScrollView: UIScrollView, UIScrollViewDelegate {
+    let imageView = UIImageView()
+    var onZoomChange: ((Bool) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        delegate = self
+        showsHorizontalScrollIndicator = false
+        showsVerticalScrollIndicator = false
+        contentInsetAdjustmentBehavior = .never
+        decelerationRate = .fast
+        maximumZoomScale = 6
+        bouncesZoom = true
+        backgroundColor = .clear
+        imageView.contentMode = .scaleAspectFit
+        addSubview(imageView)
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        addGestureRecognizer(doubleTap)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func setImage(_ image: UIImage) {
+        imageView.image = image
+        zoomScale = 1
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // At 1x the photo fits the screen. Zooming scales from there.
+        if zoomScale == 1, let image = imageView.image, bounds.width > 0, bounds.height > 0 {
+            let fit = min(bounds.width / image.size.width, bounds.height / image.size.height)
+            let size = CGSize(width: image.size.width * fit, height: image.size.height * fit)
+            if imageView.bounds.size != size {
+                imageView.frame = CGRect(origin: .zero, size: size)
+                contentSize = size
+            }
+        }
+        centerImage()
+    }
+
+    /// Keeps a photo smaller than the screen in the middle, rather than stuck to the top left.
+    private func centerImage() {
+        let horizontal = max((bounds.width - contentSize.width) / 2, 0)
+        let vertical = max((bounds.height - contentSize.height) / 2, 0)
+        contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerImage()
+        onZoomChange?(zoomScale > 1.01)
+    }
+
+    @objc private func doubleTapped(_ recognizer: UITapGestureRecognizer) {
+        if zoomScale > 1.01 {
+            setZoomScale(1, animated: true)
+        } else {
+            // Zooms into the spot you tapped, as Photos does.
+            let point = recognizer.location(in: imageView)
+            let scale: CGFloat = 3
+            let size = CGSize(width: bounds.width / scale, height: bounds.height / scale)
+            zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height), animated: true)
+        }
     }
 }
 
