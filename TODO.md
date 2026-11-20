@@ -129,6 +129,17 @@ to bill against, so the options are Apple's models or a server of our own.
 - [ ] Explain what happens to photos in one plain line during setup (they're read, then moved into
       Flyers), with the toggle right there.
 
+### App Store Connect business setup (yours)
+- [ ] Paid Applications Agreement: accept it, then add bank account and tax forms (W-9) so it's
+      Active. Needed for the sync purchase and the Small Business Program.
+- [ ] App Store Small Business Program: enroll (15% commission instead of 30%). Also required for
+      free Private Cloud Compute.
+- [ ] EU Digital Services Act trader status: App Store Connect → Business → Complete Compliance
+      Requirements. Selling the sync purchase in the EU makes you a trader, and Apple then shows
+      your contact details (address, phone, email) on the EU App Store listing. A business
+      address, phone and email that aren't your home ones avoid publishing those. Not declaring
+      means Flyers can't be offered in the EU.
+
 ### Mac App Store
 - [ ] App Sandbox for the Mac app (needed for the Mac App Store), with the data moved into the
       sandbox container on first launch.
