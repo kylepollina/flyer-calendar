@@ -130,8 +130,9 @@ to bill against, so the options are Apple's models or a server of our own.
       Flyers), with the toggle right there.
 
 ### App Store Connect business setup (yours)
-- [ ] Paid Applications Agreement: accept it, then add bank account and tax forms (W-9) so it's
-      Active. Needed for the sync purchase and the Small Business Program.
+- [x] Paid Applications Agreement: accepted, bank account and W-9 added (Nov 20). Waiting for Apple
+      to make it Active. Needed for the sync purchase and the Small Business Program.
+- [ ] Developer account address: update requested (Nov 20), can take up to two weeks.
 - [ ] App Store Small Business Program: enroll (15% commission instead of 30%). Also required for
       free Private Cloud Compute.
 - [ ] EU Digital Services Act trader status: App Store Connect → Business → Complete Compliance
