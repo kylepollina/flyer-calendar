@@ -1032,7 +1032,11 @@ private func blankImage(_ gray: CGFloat) -> Data {
     @Test func noTimeMeansAllDayAcrossTheWholeSpan() {
         let times = CalendarService.times(for: event(start: "2026-10-09", time: nil, endDay: "2026-10-11"))!
         #expect(times.isAllDay)
-        #expect(Day(date: times.end) == Day(iso: "2026-10-11"))
+        // Calendar counts an all-day entry as over at its end, so it ends as the 12th begins and
+        // the 11th is included.
+        #expect(Day(date: times.end) == Day(iso: "2026-10-12"))
+        let oneDay = CalendarService.times(for: event(start: "2026-10-09", time: nil))!
+        #expect(Day(date: oneDay.end) == Day(iso: "2026-10-10"))
     }
 
     @Test func noEndTimeGetsANominalHour() {

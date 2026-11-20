@@ -195,7 +195,10 @@ public final class CalendarService: CalendarSyncing {
     ) -> (start: Date, end: Date, isAllDay: Bool)? {
         guard let startDay = event.startDay else { return nil }
         guard let startTime = event.startTime, let start = at(startDay, time: startTime, calendar: calendar) else {
-            return (startDay.date(calendar: calendar), (event.endDay ?? startDay).date(calendar: calendar), true)
+            // An all-day entry ends at the start of the day after its last day. Ending at the start of
+            // the last day left that day off, so a Nov 5–15 run showed through the 14th.
+            let lastDay = (event.endDay ?? startDay).date(calendar: calendar)
+            return (startDay.date(calendar: calendar), calendar.date(byAdding: .day, value: 1, to: lastDay) ?? lastDay, true)
         }
         guard let endTime = event.endTime, var end = at(event.endDay ?? startDay, time: endTime, calendar: calendar) else {
             return (start, start.addingTimeInterval(3600), false)

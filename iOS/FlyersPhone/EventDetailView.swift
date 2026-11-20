@@ -57,6 +57,18 @@ struct EventDetailView: View {
         .background { FlyerBackdrop(image: thumbnail) }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // In the top bar beside the menu, where apps keep their heart, so the calendar button
+            // below keeps its full width.
+            if !event.isHidden {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { engine.toggleHeart(event.id) } label: {
+                        Label(event.isHearted ? "Unheart" : "Heart", systemImage: event.isHearted ? "heart.fill" : "heart")
+                            .foregroundStyle(event.isHearted ? AnyShapeStyle(.pink) : AnyShapeStyle(.primary))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .sensoryFeedback(.selection, trigger: event.isHearted)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) { moreMenu(event, flyer: flyer) }
         }
         .sheet(isPresented: $isEditing) { PhoneEditEventView(engine: engine, event: event) }
@@ -146,14 +158,6 @@ struct EventDetailView: View {
                     Spacer()
                 }
                 if !event.isHidden {
-                    Button { engine.toggleHeart(event.id) } label: {
-                        Label(event.isHearted ? "Unheart" : "Heart", systemImage: event.isHearted ? "heart.fill" : "heart")
-                            .labelStyle(.iconOnly)
-                            .foregroundStyle(.pink)
-                            .contentTransition(.symbolEffect(.replace))
-                    }
-                    .glassButton()
-                    .sensoryFeedback(.selection, trigger: event.isHearted)
                     Button { isEditing = true } label: {
                         Text("Edit")
                     }
