@@ -138,3 +138,33 @@ struct SetupBackdrop: View {
         .accessibilityHidden(true)
     }
 }
+
+extension VerticalAlignment {
+    private enum FactCenter: AlignmentID {
+        static func defaultValue(in dimensions: ViewDimensions) -> CGFloat { dimensions[VerticalAlignment.center] }
+    }
+
+    /// The middle of a fact's label and the first line of its value, which its icon centers on.
+    /// Shared by the Mac and iPhone event pages.
+    static let factCenter = VerticalAlignment(FactCenter.self)
+}
+
+/// A fact's small label, carrying the center the icon lines up with: halfway down the label and
+/// the value's first line, whose height follows the text size.
+struct FactLabel: View {
+    let text: String
+    let spacing: CGFloat
+    /// One line of regular text: 13-point text on the Mac, 17-point on the iPhone.
+    #if os(macOS)
+    @ScaledMetric(relativeTo: .body) private var firstLine: CGFloat = 16
+    #else
+    @ScaledMetric(relativeTo: .body) private var firstLine: CGFloat = 22
+    #endif
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .alignmentGuide(.factCenter) { label in (label.height + spacing + firstLine) / 2 }
+    }
+}

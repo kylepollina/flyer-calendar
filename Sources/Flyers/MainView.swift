@@ -780,13 +780,14 @@ struct FactRow<Value: View>: View {
     @ViewBuilder let value: () -> Value
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        // The icon centers on the label and the first line of the value together.
+        HStack(alignment: .factCenter, spacing: 12) {
             Image(systemName: symbol)
                 .foregroundStyle(.secondary)
                 .frame(width: 20)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.caption).foregroundStyle(.secondary)
+                FactLabel(text: label, spacing: 2)
                 value()
             }
             Spacer(minLength: 0)
